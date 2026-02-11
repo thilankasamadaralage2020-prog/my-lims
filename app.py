@@ -7,7 +7,7 @@ import base64
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_v16.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_system.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -23,6 +23,7 @@ def init_db():
 conn = init_db()
 c = conn.cursor()
 
+# --- REF GENERATOR ---
 def generate_ref_no():
     today_str = str(date.today())
     c.execute("SELECT COUNT(*) FROM billing WHERE date = ?", (today_str,))
@@ -30,6 +31,7 @@ def generate_ref_no():
     now = datetime.now()
     return f"LC/{now.strftime('%d/%m/%y')}/{count:02d}"
 
+# --- PDF FUNCTION ---
 def get_pdf_link(ref_no, salute, name, age, gender, mobile, doctor, tests, total, discount, final):
     pdf = FPDF()
     pdf.add_page()
@@ -66,6 +68,7 @@ def get_pdf_link(ref_no, salute, name, age, gender, mobile, doctor, tests, total
     b64 = base64.b64encode(binary_pdf).decode('utf-8')
     return f'<a href="data:application/pdf;base64,{b64}" target="_blank" style="text-decoration:none; background-color:#28a745; color:white; padding:12px 24px; border-radius:5px; font-weight:bold; display:inline-block;">📄 View & Print Invoice</a>'
 
+# --- UI ---
 st.set_page_config(page_title="Life Care LIMS", layout="wide")
 
 if 'logged_in' not in st.session_state:
@@ -86,43 +89,70 @@ else:
     if st.sidebar.button("Logout"):
         st.session_state.logged_in = False; st.rerun()
 
+    # --- ADMIN DASHBOARD ---
     if st.session_state.user_role == "Admin":
-        menu = st.sidebar.selectbox("Menu", ["Test Management", "User Management", "Doctor Management", "Sales"])
+        menu = st.sidebar.selectbox("Admin Menu", ["Test Management", "User Management", "Doctor Management", "Sales Reports"])
+        
         if menu == "Test Management":
-            with st.form("t"):
-                tn, tp = st.text_input("Test"), st.number_input("Price", min_value=0.0)
-                if st.form_submit_button("Save"):
+            st.subheader("🧪 Manage Tests")
+            with st.form("t_form"):
+                tn = st.text_input("Test Name")
+                tp = st.number_input("Price (LKR)", min_value=0.0)
+                if st.form_submit_button("Save Test"):
                     c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.rerun()
             st.dataframe(pd.read_sql_query("SELECT * FROM tests", conn), use_container_width=True)
-        # (Doctor and User management code continues here...)
 
+        elif menu == "User Management":
+            st.subheader("👥 User Management")
+            with st.form("u_form"):
+                nu = st.text_input("Username")
+                np = st.text_input("Password")
+                nr = st.selectbox("Role", ["Admin", "Billing"])
+                if st.form_submit_button("Add User"):
+                    c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr)); conn.commit(); st.success("User Updated")
+            st.dataframe(pd.read_sql_query("SELECT username, role FROM users", conn), use_container_width=True)
+
+        elif menu == "Doctor Management":
+            st.subheader("👨‍⚕️ Manage Doctors")
+            with st.form("d_form"):
+                dn = st.text_input("Doctor Name")
+                if st.form_submit_button("Add Doctor"):
+                    c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.success("Doctor Added")
+            st.dataframe(pd.read_sql_query("SELECT * FROM doctors", conn), use_container_width=True)
+
+        elif menu == "Sales Reports":
+            st.subheader("📊 Daily Sales")
+            d_pick = st.date_input("Select Date", date.today())
+            sales_df = pd.read_sql_query(f"SELECT ref_no, name, final_amount FROM billing WHERE date='{d_pick}'", conn)
+            st.dataframe(sales_df, use_container_width=True)
+            st.metric("Total Income", f"LKR {sales_df['final_amount'].sum():,.2f}")
+
+    # --- BILLING DASHBOARD ---
     elif st.session_state.user_role == "Billing":
         t1, t2 = st.tabs(["📝 New Bill", "📂 Saved Bills"])
         with t1:
             c1, c2, c3 = st.columns(3)
             with c1: salute = st.selectbox("Salute", ["Mr", "Mrs", "Mast", "Miss", "Rev"]); p_name = st.text_input("Name")
-            with c2: p_age = st.number_input("Age", 0, 120); p_gender = st.selectbox("Gender", ["M", "F"])
+            with c2: p_age = st.number_input("Age", 0, 120); p_gender = st.selectbox("Gender", ["Male", "Female"])
             with c3: p_mob = st.text_input("Mobile"); docs = pd.read_sql_query("SELECT doc_name FROM doctors", conn)['doc_name'].tolist(); p_doc = st.selectbox("Doctor", ["Self"] + docs)
 
             st.markdown("---")
             tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
             test_opt = [f"{r['test_name']} - LKR {r['price']:,.2f}" for i, r in tests_db.iterrows()]
-            
-            # Arrow Keys + Enter එකෙන් add කිරීමට මෙම multiselect එක භාවිතා කරන්න
-            selected = st.multiselect("Select Tests (Use Arrow Keys & Enter)", test_opt)
+            selected = st.multiselect("Select Tests (Arrow keys & Enter)", test_opt)
             
             # --- CALCULATIONS ---
             full_amt = sum([float(s.split(" - LKR")[-1].replace(',', '')) for s in selected])
             
-            st.write("### Payment Details")
+            st.write("### Payment Summary")
             ca, cb, cc = st.columns(3)
-            with ca: st.metric("Full Amount", f"LKR {full_amt:,.2f}")
-            with cb: discount = st.number_input("Discount (LKR)", min_value=0.0, step=10.0)
+            with ca: st.info(f"Full Amount: LKR {full_amt:,.2f}")
+            with cb: discount = st.number_input("Discount (LKR)", min_value=0.0)
             with cc: 
                 final_amt = full_amt - discount
-                st.metric("Final Amount", f"LKR {final_amt:,.2f}", delta=f"-{discount:,.2f}")
+                st.success(f"Final Amount: LKR {final_amt:,.2f}")
 
-            if st.button("Save & Generate Invoice", use_container_width=True):
+            if st.button("Generate Invoice", use_container_width=True):
                 if p_name and selected:
                     ref = generate_ref_no()
                     test_list = ", ".join([s.split(" - LKR")[0] for s in selected])
@@ -130,7 +160,6 @@ else:
                               (ref, salute, p_name, p_age, p_gender, p_mob, p_doc, test_list, full_amt, discount, final_amt, str(date.today()), st.session_state.username, "Active"))
                     conn.commit()
                     st.markdown(get_pdf_link(ref, salute, p_name, p_age, p_gender, p_mob, p_doc, test_list, full_amt, discount, final_amt), unsafe_allow_html=True)
-                else: st.error("Fill all details.")
 
         with t2:
             st.dataframe(pd.read_sql_query("SELECT ref_no, name, tests, final_amount, date FROM billing ORDER BY id DESC", conn), use_container_width=True)
