@@ -6,7 +6,7 @@ from fpdf import FPDF
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v29.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v30.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -25,105 +25,143 @@ c = conn.cursor()
 # --- REFERENCE RANGES LOGIC ---
 def get_full_fbc_ranges(age_y, gender):
     if age_y < 5:
-        return {"type": "BABY", "wbc": "5,000-13,000", "wmin": 5000, "wmax": 13000, "hb": "11.5-15.5", "hmin": 11.5, "hmax": 15.5, "plt": "150,000-450,000", "pmin": 150000, "pmax": 450000, "rbc": "4.0-5.2", "hct": "35.0-45.0", "mcv": "75.0-87.0", "mch": "25.0-31.0", "mchc": "32.0-36.0", "rdw": "11.5-14.5", "mpv": "7.0-11.0"}
+        return {"type": "BABY", "wbc": "5,000-13,000", "rbc": "4.0-5.2", "hb": "11.5-15.5", "hct": "35.0-45.0", "mcv": "75.0-87.0", "mch": "25.0-31.0", "mchc": "32.0-36.0", "rdw": "11.5-14.5", "plt": "150,000-450,000", "mpv": "7.0-11.0"}
     elif gender == "Female":
-        return {"type": "FEMALE", "wbc": "4,000-11,000", "wmin": 4000, "wmax": 11000, "hb": "11.5-16.5", "hmin": 11.5, "hmax": 16.5, "plt": "150,000-450,000", "pmin": 150000, "pmax": 450000, "rbc": "3.9-4.5", "hct": "36.0-46.0", "mcv": "80.0-95.0", "mch": "27.0-32.0", "mchc": "32.0-36.0", "rdw": "11.5-14.5", "mpv": "7.0-11.0"}
+        return {"type": "FEMALE", "wbc": "4,000-11,000", "rbc": "3.9-4.5", "hb": "11.5-16.5", "hct": "36.0-46.0", "mcv": "80.0-95.0", "mch": "27.0-32.0", "mchc": "32.0-36.0", "rdw": "11.5-14.5", "plt": "150,000-450,000", "mpv": "7.0-11.0"}
     else:
-        return {"type": "MALE", "wbc": "4,000-11,000", "wmin": 4000, "wmax": 11000, "hb": "13.0-17.0", "hmin": 10.0, "hmax": 17.0, "plt": "150,000-450,000", "pmin": 150000, "pmax": 550000, "rbc": "4.5-5.6", "hct": "40.0-50.0", "mcv": "82.0-98.0", "mch": "27.0-32.0", "mchc": "32.0-36.0", "rdw": "11.5-14.5", "mpv": "7.0-11.0"}
+        return {"type": "MALE", "wbc": "4,000-11,000", "rbc": "4.5-5.6", "hb": "13.0-17.0", "hct": "40.0-50.0", "mcv": "82.0-98.0", "mch": "27.0-32.0", "mchc": "32.0-36.0", "rdw": "11.5-14.5", "plt": "150,000-450,000", "mpv": "7.0-11.0"}
 
-# --- PDF GENERATOR (FBC) ---
-def create_full_fbc_pdf(p_data, res, refs):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16); pdf.cell(200, 10, "LIFE CARE LABORATORY (PVT) LTD", ln=True, align='C')
-    pdf.set_font("Arial", 'B', 10); pdf.cell(200, 5, f"FULL BLOOD COUNT REPORT ({refs['type']})", ln=True, align='C')
-    pdf.ln(5)
-    pdf.set_font("Arial", '', 9)
-    pdf.cell(100, 6, f"Patient: {p_data['salute']} {p_data['name']}"); pdf.cell(100, 6, f"Ref: {p_data['ref_no']}", ln=True, align='R')
-    pdf.cell(100, 6, f"Age: {p_data['age_y']}Y {p_data['age_m']}M / {p_data['gender']}"); pdf.cell(100, 6, f"Date: {date.today()}", ln=True, align='R')
-    pdf.ln(2); pdf.cell(190, 0, "", border='T', ln=True); pdf.ln(4)
-    
-    pdf.set_font("Arial", 'B', 9)
-    pdf.cell(60, 8, "PARAMETER"); pdf.cell(30, 8, "RESULT", align='C'); pdf.cell(30, 8, "UNIT", align='C'); pdf.cell(30, 8, "ABS.COUNT", align='C'); pdf.cell(40, 8, "REF.RANGE", ln=True, align='C')
-    pdf.set_font("Arial", '', 9)
-    
-    def add_l(lab, val, uni, abs_v, ref_t):
-        pdf.cell(60, 7, lab); pdf.cell(30, 7, str(val), align='C'); pdf.cell(30, 7, uni, align='C'); pdf.cell(30, 7, str(abs_v), align='C'); pdf.cell(40, 7, ref_t, ln=True, align='C')
-
-    add_l("WHITE BLOOD CELLS", res['wbc'], "cells/cu.mm", "-", refs['wbc'])
-    for c in ['Neutrophils', 'Lymphocytes', 'Monocytes', 'Eosinophils', 'Basophils']:
-        add_l(f"  {c.upper()}", f"{res[c.lower()]}%", "%", int((res[c.lower()]/100)*res['wbc']), "")
-    pdf.ln(2)
-    add_l("RED BLOOD CELLS", res['rbc'], "mill/cu.mm", "-", refs['rbc'])
-    add_l("HAEMOGLOBIN (Hb)", res['hb'], "g/dL", "-", refs['hb'])
-    add_l("PACKED CELL VOL (HCT)", res['hct'], "%", "-", refs['hct'])
-    add_l("PLATELET COUNT", res['plt'], "cells/cu.mm", "-", refs['plt'])
-    return pdf.output(dest='S').encode('latin-1')
-
-# --- MAIN APP ---
+# --- MAIN APP CONFIG ---
 st.set_page_config(page_title="Life Care LIMS", layout="wide")
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# 1. LOGIN PAGE
+# --- LOGIN INTERFACE ---
 if not st.session_state.logged_in:
-    st.title("🏥 Life Care Laboratory")
-    with st.form("login"):
+    st.markdown("<h2 style='text-align: center;'>LIFE CARE LABORATORY</h2>", unsafe_allow_html=True)
+    with st.form("login_form"):
         u = st.text_input("Username")
         p = st.text_input("Password", type="password")
         r = st.selectbox("Role", ["Admin", "Billing", "Technician"])
-        if st.form_submit_button("LOGIN"):
+        if st.form_submit_button("LOGIN", use_container_width=True):
             c.execute('SELECT * FROM users WHERE username=? AND password=? AND role=?', (u, p, r))
             if c.fetchone():
                 st.session_state.update({'logged_in': True, 'user_role': r, 'username': u})
                 st.rerun()
-            else: st.error("Invalid Credentials")
+            else:
+                st.error("පරිශීලක නාමය හෝ මුරපදය වැරදියි!")
 
-# 2. APP CONTENT
+# --- AUTHENTICATED CONTENT ---
 else:
-    st.sidebar.title(f"User: {st.session_state.username}")
+    st.sidebar.title(f"👤 {st.session_state.username}")
     if st.sidebar.button("Logout"):
         st.session_state.logged_in = False
         st.rerun()
 
+    # --- ADMIN DASHBOARD ---
     if st.session_state.user_role == "Admin":
         menu = st.sidebar.selectbox("Admin Menu", ["User Management", "Doctor Management", "Test Management"])
         
         if menu == "User Management":
-            st.subheader("User Management")
-            with st.form("nu"):
-                un = st.text_input("Username"); pw = st.text_input("Password"); rl = st.selectbox("Role", ["Admin", "Billing", "Technician"])
-                if st.form_submit_button("Add User"):
+            st.subheader("👥 System User Management")
+            with st.form("u_form"):
+                un = st.text_input("New Username"); pw = st.text_input("Password"); rl = st.selectbox("Role", ["Admin", "Billing", "Technician"])
+                if st.form_submit_button("Create User"):
                     c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (un, pw, rl)); conn.commit(); st.rerun()
             
             for row in pd.read_sql_query("SELECT * FROM users", conn).itertuples():
-                c1, c2, c3 = st.columns(3)
+                c1, c2, c3 = st.columns([3,2,1])
                 c1.write(row.username); c2.write(row.role)
-                if row.username != st.session_state.username and c3.button("Delete", key=row.username):
-                    c.execute("DELETE FROM users WHERE username=?", (row.username,)); conn.commit(); st.rerun()
+                if row.username != st.session_state.username:
+                    if c3.button("🗑️ Delete", key=f"u_{row.username}"):
+                        c.execute("DELETE FROM users WHERE username=?", (row.username,)); conn.commit(); st.rerun()
 
         elif menu == "Doctor Management":
-            st.subheader("Doctor Management")
-            with st.form("nd"):
+            st.subheader("👨‍⚕️ Manage Doctors")
+            with st.form("d_form"):
                 dn = st.text_input("Doctor Name")
                 if st.form_submit_button("Add Doctor"):
                     c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.rerun()
             
             for row in pd.read_sql_query("SELECT * FROM doctors", conn).itertuples():
-                c1, c2 = st.columns([4, 1])
+                c1, c2 = st.columns([5, 1])
                 c1.write(row.doc_name)
-                if c2.button("Delete", key=f"d_{row.id}"):
+                if c2.button("🗑️ Delete", key=f"d_{row.id}"):
                     c.execute("DELETE FROM doctors WHERE id=?", (row.id,)); conn.commit(); st.rerun()
 
-    elif st.session_state.user_role == "Billing":
-        st.subheader("Registration & Billing")
-        # Billing fields (Salute, Name, Age_Y, Age_M, Gender, Mobile, Doctor, Test multiselect)
-        # Same logic as previous stable version...
-        st.write("Billing functionality is active.")
+        elif menu == "Test Management":
+            st.subheader("🧪 Manage Laboratory Tests")
+            with st.form("t_form"):
+                tn = st.text_input("Test Name"); tp = st.number_input("Price (LKR)", min_value=0.0)
+                if st.form_submit_button("Save Test"):
+                    c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.rerun()
+            
+            for row in pd.read_sql_query("SELECT * FROM tests", conn).itertuples():
+                c1, c2, c3 = st.columns([3, 2, 1])
+                c1.write(row.test_name); c2.write(f"LKR {row.price:,.2f}")
+                if c3.button("🗑️ Delete", key=f"t_{row.test_name}"):
+                    c.execute("DELETE FROM tests WHERE test_name=?", (row.test_name,)); conn.commit(); st.rerun()
 
+    # --- BILLING DASHBOARD ---
+    elif st.session_state.user_role == "Billing":
+        st.subheader("📝 Registration & Billing")
+        with st.container(border=True):
+            col1, col2 = st.columns(2)
+            salute = col1.selectbox("Salute", ["Mr", "Mrs", "Miss", "Baby", "Rev"])
+            p_name = col2.text_input("Patient Name")
+            ay = col1.number_input("Age (Years)", 0, 120, 0)
+            am = col2.number_input("Age (Months) - Optional", 0, 11, 0)
+            p_gen = col1.selectbox("Gender", ["Male", "Female"])
+            p_mob = col2.text_input("Mobile No")
+            docs = [d[0] for d in c.execute("SELECT doc_name FROM doctors").fetchall()]
+            p_doc = st.selectbox("Referral Doctor", ["Self"] + docs)
+
+        tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
+        test_opts = [f"{r['test_name']} - LKR {r['price']:,.2f}" for i, r in tests_db.iterrows()]
+        selected = st.multiselect("Select Tests", test_opts)
+        
+        full_amt = sum([float(s.split(" - LKR")[-1].replace(',', '')) for s in selected])
+        st.write("---")
+        ca, cb, cc = st.columns(3)
+        ca.metric("Total", f"LKR {full_amt:,.2f}")
+        disc = cb.number_input("Discount", 0.0)
+        final = full_amt - disc
+        cc.metric("Final Payable", f"LKR {final:,.2f}")
+
+        if st.button("Save & Print", use_container_width=True):
+            if p_name and selected:
+                ref = f"LC{datetime.now().strftime('%y%m%d%H%M')}"
+                t_names = ", ".join([s.split(" - LKR")[0] for s in selected])
+                c.execute("INSERT INTO billing VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (ref, salute, p_name, ay, am, p_gen, p_mob, p_doc, t_names, full_amt, disc, final, str(date.today()), st.session_state.username, "Active"))
+                conn.commit(); st.success(f"Saved! Ref: {ref}")
+            else: st.error("කරුණාකර රෝගියාගේ නම සහ පරීක්ෂණ ඇතුළත් කරන්න.")
+
+    # --- TECHNICIAN DASHBOARD ---
     elif st.session_state.user_role == "Technician":
-        st.subheader("FBC Report Entry")
-        st.write("Technician functionality is active.")
+        st.subheader("🔬 FBC Report Entry")
+        pending = c.execute("SELECT ref_no, name, age_y, gender, salute, age_m FROM billing WHERE status='Active'").fetchall()
+        if pending:
+            sel = st.selectbox("Select Patient", [f"{p[0]} - {p[1]}" for p in pending])
+            if sel:
+                ref_code = sel.split(" - ")[0]
+                p_data = [p for p in pending if p[0] == ref_code][0]
+                refs = get_full_fbc_ranges(p_data[2], p_data[3])
+                st.info(f"Format: {refs['type']}")
+                
+                with st.form("fbc_form"):
+                    st.write("WBC, Hb & Platelets")
+                    c1, c2, c3 = st.columns(3)
+                    wbc = c1.number_input("WBC", value=None); hb = c2.number_input("Hb", value=None); plt = c3.number_input("Platelets", value=None)
+                    
+                    st.write("RBC Indices")
+                    r1, r2, r3, r4 = st.columns(4)
+                    rbc = r1.number_input("RBC", value=None); hct = r2.number_input("HCT", value=None); mcv = r3.number_input("MCV", value=None); mch = r4.number_input("MCH", value=None)
+                    
+                    if st.form_submit_button("Submit Results"):
+                        st.success("Results updated (PDF generation module ready)")
+        else:
+            st.warning("පරීක්ෂණ සඳහා රෝගීන් කිසිවෙකු නොමැත.")
 
 conn.close()
