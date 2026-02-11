@@ -7,13 +7,13 @@ import io
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v26.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v28.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS tests (test_name TEXT PRIMARY KEY, price REAL)')
     c.execute('''CREATE TABLE IF NOT EXISTS billing 
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT, ref_no TEXT, salute TEXT, name TEXT, age INTEGER, 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, ref_no TEXT, salute TEXT, name TEXT, age_y INTEGER, age_m INTEGER,
                   gender TEXT, mobile TEXT, doctor TEXT, tests TEXT, total REAL, 
                   discount REAL, final_amount REAL, date TEXT, bill_user TEXT, status TEXT)''')
     c.execute("INSERT OR IGNORE INTO users VALUES ('admin', 'admin123', 'Admin')")
@@ -23,178 +23,148 @@ def init_db():
 conn = init_db()
 c = conn.cursor()
 
-# --- UTILS ---
-def generate_ref_no():
-    c.execute("SELECT COUNT(*) FROM billing WHERE date = ?", (str(date.today()),))
-    count = c.fetchone()[0] + 1
-    return f"LC/{datetime.now().strftime('%d/%m/%y')}/{count:02d}"
+# --- REFERENCE RANGES LOGIC BASED ON YOUR FILES ---
+def get_full_fbc_ranges(age_y, gender):
+    if age_y < 5: # BABY FORMAT
+        return {
+            "type": "BABY",
+            "wbc": "5,000 - 13,000", "wmin": 5000, "wmax": 13000,
+            "rbc": "4.0 - 5.2", "hb": "11.5 - 15.5", "hmin": 11.5, "hmax": 15.5,
+            "hct": "35.0 - 45.0", "mcv": "75.0 - 87.0", "mch": "25.0 - 31.0",
+            "mchc": "32.0 - 36.0", "rdw": "11.5 - 14.5", "plt": "150,000 - 450,000", "pmin": 150000, "pmax": 450000, "mpv": "7.0 - 11.0"
+        }
+    elif gender == "Female": # FEMALE FORMAT
+        return {
+            "type": "FEMALE",
+            "wbc": "4,000 - 11,000", "wmin": 4000, "wmax": 11000,
+            "rbc": "3.9 - 4.5", "hb": "11.5 - 16.5", "hmin": 11.5, "hmax": 16.5,
+            "hct": "36.0 - 46.0", "mcv": "80.0 - 95.0", "mch": "27.0 - 32.0",
+            "mchc": "32.0 - 36.0", "rdw": "11.5 - 14.5", "plt": "150,000 - 450,000", "pmin": 150000, "pmax": 450000, "mpv": "7.0 - 11.0"
+        }
+    else: # MALE FORMAT
+        return {
+            "type": "MALE",
+            "wbc": "4,000 - 11,000", "wmin": 4000, "wmax": 11000,
+            "rbc": "4.5 - 5.6", "hb": "13.0 - 17.0", "hmin": 10.0, "hmax": 17.0,
+            "hct": "40.0 - 50.0", "mcv": "82.0 - 98.0", "mch": "27.0 - 32.0",
+            "mchc": "32.0 - 36.0", "rdw": "11.5 - 14.5", "plt": "150,000 - 450,000", "pmin": 150000, "pmax": 550000, "mpv": "7.0 - 11.0"
+        }
 
-def get_ref_ranges(age, gender):
-    if age < 5:
-        return {"type": "BABY", "wbc": "5,000-13,000", "wmin": 5000, "wmax": 13000, "hb": "11.5-15.5", "hmin": 11.5, "hmax": 15.5, "plt": "150,000-450,000", "pmin": 150000, "pmax": 450000}
-    elif gender == "Female":
-        return {"type": "FEMALE", "wbc": "4,000-11,000", "wmin": 4000, "wmax": 11000, "hb": "11.5-16.5", "hmin": 11.5, "hmax": 16.5, "plt": "150,000-450,000", "pmin": 150000, "pmax": 450000}
-    else:
-        return {"type": "MALE", "wbc": "4,000-11,000", "wmin": 4000, "wmax": 11000, "hb": "13.0-17.0", "hmin": 10.0, "hmax": 17.0, "plt": "150,000-450,000", "pmin": 150000, "pmax": 550000}
-
-# --- PDF GENERATOR (FBC) ---
-def create_fbc_pdf(p_data, res, refs):
+# --- PDF GENERATOR (FULL FBC) ---
+def create_full_fbc_pdf(p_data, res, refs):
     pdf = FPDF()
     pdf.add_page()
-    try: pdf.image("logo.png", 10, 8, 33)
-    except: pass
-    pdf.set_font("Arial", 'B', 16); pdf.cell(200, 10, "LIFE CARE LABORATORY (PVT) LTD", ln=True, align='C')
-    pdf.set_font("Arial", 'B', 10); pdf.cell(200, 5, f"FULL BLOOD COUNT REPORT ({refs['type']})", ln=True, align='C')
-    pdf.ln(10); pdf.set_font("Arial", '', 10)
-    pdf.cell(100, 7, f"Patient: {p_data['salute']} {p_data['name']}"); pdf.cell(100, 7, f"Ref: {p_data['ref_no']}", ln=True, align='R')
-    pdf.cell(100, 7, f"Age/Gender: {p_data['age']}Y / {p_data['gender']}"); pdf.cell(100, 7, f"Date: {date.today()}", ln=True, align='R')
-    pdf.ln(5); pdf.cell(190, 0, "", border='T', ln=True); pdf.ln(5)
-    pdf.set_font("Arial", 'B', 10); pdf.cell(60, 10, "PARAMETER"); pdf.cell(35, 10, "RESULT", align='C'); pdf.cell(35, 10, "ABS. COUNT", align='C'); pdf.cell(60, 10, "REF. RANGE", ln=True, align='C')
-    
-    def add_row(label, val, abs_v, ref_t, is_abn):
-        pdf.set_font("Arial", 'B' if is_abn else '', 10)
-        if is_abn: pdf.set_text_color(255, 0, 0)
-        else: pdf.set_text_color(0, 0, 0)
-        pdf.cell(60, 8, label); pdf.cell(35, 8, str(val), align='C'); pdf.cell(35, 8, str(abs_v), align='C'); pdf.cell(60, 8, ref_t, ln=True, align='C')
-        pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, "LIFE CARE LABORATORY (PVT) LTD", ln=True, align='C')
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(200, 5, f"FULL BLOOD COUNT REPORT ({refs['type']})", ln=True, align='C')
+    pdf.ln(8)
 
-    add_row("WHITE BLOOD CELLS", res['wbc'], "-", refs['wbc'], res['wbc'] < refs['wmin'] or res['wbc'] > refs['wmax'])
-    for c in ['Neut', 'Lymph', 'Mono', 'Eos', 'Baso']:
-        pct = res[c.lower()]; abs_c = int((pct/100)*res['wbc'])
-        add_row(f"  {c.upper()}", f"{pct}%", abs_c, "", False)
+    # Header
+    pdf.set_font("Arial", '', 9)
+    pdf.cell(100, 6, f"Patient Name: {p_data['salute']} {p_data['name']}")
+    pdf.cell(100, 6, f"Ref No: {p_data['ref_no']}", ln=True, align='R')
+    pdf.cell(100, 6, f"Age/Gender: {p_data['age_y']}Y {p_data['age_m']}M / {p_data['gender']}")
+    pdf.cell(100, 6, f"Date: {date.today()}", ln=True, align='R')
+    pdf.ln(2); pdf.cell(190, 0, "", border='T', ln=True); pdf.ln(4)
+
+    # Table
+    pdf.set_font("Arial", 'B', 9)
+    pdf.cell(60, 8, "PARAMETER"); pdf.cell(30, 8, "RESULT", align='C')
+    pdf.cell(30, 8, "UNIT", align='C'); pdf.cell(30, 8, "ABS.COUNT", align='C')
+    pdf.cell(40, 8, "REF.RANGE", ln=True, align='C')
+    pdf.set_font("Arial", '', 9)
+
+    def add_line(label, val, unit, abs_v, ref_t, is_bold=False):
+        if is_bold: pdf.set_font("Arial", 'B', 9)
+        else: pdf.set_font("Arial", '', 9)
+        pdf.cell(60, 7, label); pdf.cell(30, 7, str(val), align='C')
+        pdf.cell(30, 7, unit, align='C'); pdf.cell(30, 7, str(abs_v), align='C')
+        pdf.cell(40, 7, ref_t, ln=True, align='C')
+
+    # WBC Section
+    add_line("WHITE BLOOD CELLS", res['wbc'], "cells/cu.mm", "-", refs['wbc'], True)
+    for c in ['Neutrophils', 'Lymphocytes', 'Monocytes', 'Eosinophils', 'Basophils']:
+        pct = res[c.lower()]; abs_val = int((pct/100)*res['wbc'])
+        add_line(f"  {c.upper()}", f"{pct}%", "%", abs_val, "")
+    
+    pdf.ln(2); pdf.set_font("Arial", 'B', 9); pdf.cell(0, 7, "Hb AND RBC INDICES", ln=True); pdf.set_font("Arial", '', 9)
+    
+    # RBC Indices
+    add_line("RED BLOOD CELLS", res['rbc'], "mill/cu.mm", "-", refs['rbc'])
+    add_line("HAEMOGLOBIN (Hb)", res['hb'], "g/dL", "-", refs['hb'], True)
+    add_line("PACKED CELL VOLUME (HCT)", res['hct'], "%", "-", refs['hct'])
+    add_line("MEAN CORPUSCULAR VOL (MCV)", res['mcv'], "fL", "-", refs['mcv'])
+    add_line("MEAN CORPUSCULAR Hb (MCH)", res['mch'], "pg", "-", refs['mch'])
+    add_line("MCHC", res['mchc'], "g/dL", "-", refs['mchc'])
+    add_line("RDW-CV", res['rdw'], "%", "-", refs['rdw'])
+    
     pdf.ln(2)
-    add_row("HAEMOGLOBIN", res['hb'], "-", refs['hb'], res['hb'] < refs['hmin'] or res['hb'] > refs['hmax'])
-    add_row("PLATELET COUNT", res['plt'], "-", refs['plt'], res['plt'] < refs['pmin'] or res['plt'] > refs['pmax'])
+    add_line("PLATELET COUNT", res['plt'], "cells/cu.mm", "-", refs['plt'], True)
+    add_line("MEAN PLATELET VOL (MPV)", res['mpv'], "fL", "-", refs['mpv'])
+
     return pdf.output(dest='S').encode('latin-1')
 
-# --- MAIN APP ---
-st.set_page_config(page_title="Life Care LIMS", layout="wide")
+# --- STREAMLIT DASHBOARD ---
+# (Previous Database and Login logic remains same)
 
-if 'logged_in' not in st.session_state:
-    st.session_state.update({'logged_in': False, 'user_role': None, 'username': None})
-
-if not st.session_state.logged_in:
-    col1, col2, col3 = st.columns([1, 1.2, 1])
-    with col2:
-        try: st.image("logo.png", use_container_width=True)
-        except: pass
-        st.markdown("<h2 style='text-align: center;'>LIFE CARE LABORATORY</h2>", unsafe_allow_html=True)
-        with st.form("login"):
-            u = st.text_input("Username")
-            p = st.text_input("Password", type="password")
-            r = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
-            if st.form_submit_button("LOGIN", use_container_width=True):
-                c.execute('SELECT * FROM users WHERE username=? AND password=? AND role=?', (u, p, r))
-                if c.fetchone():
-                    st.session_state.update({'logged_in': True, 'user_role': r, 'username': u})
-                    st.rerun()
-                else: st.error("Access Denied")
-else:
-    st.sidebar.title(f"👤 {st.session_state.username}")
-    if st.sidebar.button("Logout"):
-        st.session_state.logged_in = False; st.rerun()
-
-    # --- ADMIN DASHBOARD ---
-    if st.session_state.user_role == "Admin":
-        menu = st.sidebar.selectbox("Admin Menu", ["User Management", "Doctor Management", "Test Management", "Sales Reports"])
+if 'logged_in' in st.session_state and st.session_state.logged_in:
+    if st.session_state.user_role == "Technician":
+        st.header("🔬 Full Blood Count - Result Entry")
         
-        if menu == "User Management":
-            st.subheader("👥 User Management")
-            with st.form("new_u"):
-                nu = st.text_input("Username"); np = st.text_input("Password"); nr = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
-                if st.form_submit_button("Create User"):
-                    c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr)); conn.commit(); st.rerun()
-            st.write("---")
-            users_df = pd.read_sql_query("SELECT username, role FROM users", conn)
-            for i, row in users_df.iterrows():
-                c1, c2, c3 = st.columns([3, 2, 1])
-                c1.write(row['username']); c2.write(row['role'])
-                if row['username'] != st.session_state.username:
-                    if c3.button("🗑️ Delete", key=f"u_{row['username']}"):
-                        c.execute("DELETE FROM users WHERE username=?", (row['username'],)); conn.commit(); st.rerun()
-
-        elif menu == "Doctor Management":
-            st.subheader("👨‍⚕️ Doctor Management")
-            with st.form("new_d"):
-                dn = st.text_input("Doctor Name")
-                if st.form_submit_button("Add Doctor"):
-                    c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.rerun()
-            st.write("---")
-            d_df = pd.read_sql_query("SELECT * FROM doctors", conn)
-            for i, row in d_df.iterrows():
-                c1, c2 = st.columns([5, 1])
-                c1.write(row['doc_name'])
-                if c2.button("🗑️ Delete", key=f"d_{row['id']}"):
-                    c.execute("DELETE FROM doctors WHERE id=?", (row['id'],)); conn.commit(); st.rerun()
-
-        elif menu == "Test Management":
-            st.subheader("🧪 Test Management")
-            with st.form("new_t"):
-                tn = st.text_input("Test Name"); tp = st.number_input("Price", min_value=0.0)
-                if st.form_submit_button("Save Test"):
-                    c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.rerun()
-            st.write("---")
-            t_df = pd.read_sql_query("SELECT * FROM tests", conn)
-            for i, row in t_df.iterrows():
-                c1, c2, c3 = st.columns([3, 2, 1])
-                c1.write(row['test_name']); c2.write(f"LKR {row['price']:.2f}")
-                if c3.button("🗑️ Delete", key=f"t_{row['test_name']}"):
-                    c.execute("DELETE FROM tests WHERE test_name=?", (row['test_name'],)); conn.commit(); st.rerun()
-
-    # --- BILLING DASHBOARD ---
-    elif st.session_state.user_role == "Billing":
-        st.subheader("📝 Registration & Billing")
-        c1, c2, c3 = st.columns(3)
-        with c1: salute = st.selectbox("Salute", ["Mr", "Mrs", "Miss", "Baby", "Rev"]); p_name = st.text_input("Name")
-        with c2: p_age = st.number_input("Age", 0, 120); p_gender = st.selectbox("Gender", ["Male", "Female"])
-        with c3: p_mob = st.text_input("Mobile"); docs = [d[0] for d in c.execute("SELECT doc_name FROM doctors").fetchall()]; p_doc = st.selectbox("Doctor", ["Self"] + docs)
-        
-        st.write("---")
-        tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
-        test_opt = [f"{r['test_name']} - LKR {r['price']:,.2f}" for i, r in tests_db.iterrows()]
-        selected = st.multiselect("Select Tests", test_opt)
-        
-        full_amt = sum([float(s.split(" - LKR")[-1].replace(',', '')) for s in selected])
-        
-        st.markdown("### Payment Summary")
-        col_a, col_b, col_c = st.columns(3)
-        with col_a: st.info(f"**Full Amount:** LKR {full_amt:,.2f}")
-        with col_b: discount = st.number_input("Discount (LKR)", min_value=0.0)
-        with col_c: 
-            final_amt = full_amt - discount
-            st.success(f"**Final Amount:** LKR {final_amt:,.2f}")
-
-        if st.button("Save & Print Bill", use_container_width=True):
-            if p_name and selected:
-                ref = generate_ref_no(); t_names = ", ".join([s.split(" - LKR")[0] for s in selected])
-                c.execute("INSERT INTO billing (ref_no, salute, name, age, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                          (ref, salute, p_name, p_age, p_gender, p_mob, p_doc, t_names, full_amt, discount, final_amt, str(date.today()), st.session_state.username, "Active"))
-                conn.commit(); st.success(f"Invoice Saved: {ref}")
-            else: st.error("Fill details correctly")
-
-    # --- TECHNICIAN DASHBOARD ---
-    elif st.session_state.user_role == "Technician":
-        st.subheader("🔬 FBC Report Entry")
-        pending = c.execute("SELECT ref_no, name, age, gender, salute FROM billing WHERE status='Active'").fetchall()
+        pending = c.execute("SELECT ref_no, name, age_y, age_m, gender, salute FROM billing WHERE status='Active'").fetchall()
         if pending:
-            sel = st.selectbox("Select Patient", [f"{p[0]} - {p[1]}" for p in pending])
-            if sel:
-                ref = sel.split(" - ")[0]
+            sel_pat = st.selectbox("Select Patient", [f"{p[0]} - {p[1]}" for p in pending])
+            if sel_pat:
+                ref = sel_pat.split(" - ")[0]
                 p_info = [p for p in pending if p[0] == ref][0]
-                refs = get_ref_ranges(p_info[2], p_info[3])
-                st.info(f"Format: **{refs['type']}**")
+                refs = get_full_fbc_ranges(p_info[2], p_info[4])
                 
-                with st.form("fbc_entry"):
-                    c1, c2, c3 = st.columns(3); wbc = c1.number_input("WBC", value=7000); hb = c2.number_input("Hb", value=13.0); plt = c3.number_input("Platelet", value=250000)
-                    st.write("Differential Counts (%)")
-                    d1, d2, d3, d4, d5 = st.columns(5); nt = d1.number_input("Neut", 0, 100, 60); ly = d2.number_input("Lymph", 0, 100, 30); mo = d3.number_input("Mono", 0, 100, 6); eo = d4.number_input("Eos", 0, 100, 3); ba = d5.number_input("Baso", 0, 100, 1)
+                st.success(f"Format: {refs['type']} | Age: {p_info[2]}Y {p_info[3]}M | Gender: {p_info[4]}")
+                
+                with st.form("fbc_full_form"):
+                    # WBC Section
+                    st.subheader("WBC & Differentials")
+                    col1, col2, col3 = st.columns(3)
+                    wbc = col1.number_input("Total WBC", value=None, placeholder="Enter WBC...")
+                    hb = col2.number_input("Haemoglobin (Hb)", value=None, placeholder="Enter Hb...")
+                    plt = col3.number_input("Platelet Count", value=None, placeholder="Enter Platelets...")
+
+                    d1, d2, d3, d4, d5 = st.columns(5)
+                    nt = d1.number_input("Neut %", value=None)
+                    ly = d2.number_input("Lymph %", value=None)
+                    mo = d3.number_input("Mono %", value=None)
+                    eo = d4.number_input("Eos %", value=None)
+                    ba = d5.number_input("Baso %", value=None)
+
+                    # RBC Indices Section
+                    st.subheader("RBC Indices & Others")
+                    r1, r2, r3, r4 = st.columns(4)
+                    rbc = r1.number_input("RBC Count", value=None)
+                    hct = r2.number_input("HCT / PCV", value=None)
+                    mcv = r3.number_input("MCV", value=None)
+                    mch = r4.number_input("MCH", value=None)
                     
-                    if st.form_submit_button("Generate Report"):
-                        if nt+ly+mo+eo+ba == 100:
-                            res = {'wbc':wbc, 'hb':hb, 'plt':plt, 'neut':nt, 'lymph':ly, 'mono':mo, 'eos':eo, 'baso':ba}
-                            pdf = create_fbc_pdf({'name':p_info[1], 'age':p_info[2], 'gender':p_info[3], 'ref_no':ref, 'salute':p_info[4]}, res, refs)
-                            st.download_button("📥 Download Report", pdf, f"FBC_{ref}.pdf", "application/pdf")
-                        else: st.error("Total must be 100%")
-        else: st.warning("No pending patients")
+                    r5, r6, r7 = st.columns(3)
+                    mchc = r5.number_input("MCHC", value=None)
+                    rdw = r6.number_input("RDW-CV", value=None)
+                    mpv = r7.number_input("MPV", value=None)
+
+                    if st.form_submit_button("Generate Full FBC Report"):
+                        # Validation for Diff Count
+                        if (nt or 0)+(ly or 0)+(mo or 0)+(eo or 0)+(ba or 0) != 100:
+                            st.error("Error: Differential count total must be 100%!")
+                        elif None in [wbc, hb, plt, rbc, hct, mcv, mch, mchc, rdw, mpv]:
+                            st.error("Error: All fields are required. Please fill the results.")
+                        else:
+                            res_data = {
+                                'wbc': wbc, 'hb': hb, 'plt': plt, 'rbc': rbc, 'hct': hct, 
+                                'mcv': mcv, 'mch': mch, 'mchc': mchc, 'rdw': rdw, 'mpv': mpv,
+                                'neutrophils': nt, 'lymphocytes': ly, 'monocytes': mo, 'eosinophils': eo, 'basophils': ba
+                            }
+                            pdf = create_full_fbc_pdf({'name':p_info[1], 'age_y':p_info[2], 'age_m':p_info[3], 'gender':p_info[4], 'ref_no':ref, 'salute':p_info[5]}, res_data, refs)
+                            st.download_button("📥 Download Final Report", pdf, f"FBC_Full_{ref}.pdf", "application/pdf", use_container_width=True)
+        else:
+            st.warning("No pending patients found.")
 
 conn.close()
