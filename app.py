@@ -6,7 +6,7 @@ from fpdf import FPDF
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lims_v9_ref_logic.db', check_same_thread=False)
+    conn = sqlite3.connect('lims_v10_final.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -25,12 +25,10 @@ c = conn.cursor()
 # --- REFERENCE NUMBER GENERATOR ---
 def generate_ref_no():
     today_str = str(date.today())
-    # අද දිනට අදාළව දැනට පද්ධතියේ ඇති බිල්පත් ගණන බැලීම
     c.execute("SELECT COUNT(*) FROM billing WHERE date = ?", (today_str,))
     count = c.fetchone()[0] + 1
-    
     now = datetime.now()
-    # Format: LC/Date/Month/Year(last 2)/Serial
+    # Format: LC/DD/MM/YY/Count
     ref = f"LC/{now.strftime('%d/%m/%y')}/{count:02d}"
     return ref
 
@@ -46,25 +44,24 @@ def create_pdf(ref_no, salute, name, age, gender, mobile, doctor, tests, total, 
     pdf.cell(100, 10, f"Date: {date.today()}", ln=True, align='R')
     pdf.set_font("Arial", '', 11)
     pdf.cell(200, 10, f"Patient: {salute} {name} ({age}Y/{gender})", ln=True)
-    pdf.cell(200, 10, f"Referral Doctor: {doctor}", ln=True)
+    pdf.cell(200, 10, f"Mobile: {mobile} | Doctor: {doctor}", ln=True)
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(200, 10, "Tests List:", ln=True)
     pdf.set_font("Arial", '', 11)
     pdf.multi_cell(0, 8, tests)
     pdf.ln(10)
-    pdf.set_font("Arial", 'B', 11)
     pdf.cell(160, 10, "Full Amount (LKR):", align='R')
     pdf.cell(30, 10, f"{total:,.2f}", ln=True, align='R')
     pdf.cell(160, 10, "Discount (LKR):", align='R')
     pdf.cell(30, 10, f"{discount:,.2f}", ln=True, align='R')
-    pdf.set_fill_color(230, 230, 230)
-    pdf.cell(160, 10, "Final Amount (LKR):", align='R', fill=True)
-    pdf.cell(30, 10, f"{final:,.2f}", ln=True, align='R', fill=True)
+    pdf.set_font("Arial", 'B', 11)
+    pdf.cell(160, 10, "Final Amount (LKR):", align='R')
+    pdf.cell(30, 10, f"{final:,.2f}", ln=True, align='R')
     return pdf.output(dest='S').encode('latin-1')
 
 # --- UI SETTINGS ---
-st.set_page_config(page_title="LIMS v9 - Smart Ref & Billing", layout="wide")
+st.set_page_config(page_title="LIMS v10 - Final System", layout="wide")
 
 if 'logged_in' not in st.session_state:
     st.session_state.update({'logged_in': False, 'user_role': None, 'username': None})
@@ -88,68 +85,87 @@ else:
         st.session_state.logged_in = False
         st.rerun()
 
-    if st.session_state.user_role == "Billing":
+    # --- ADMIN INTERFACE (නිවැරදි කරන ලදී) ---
+    if st.session_state.user_role == "Admin":
+        menu = ["User Management", "Doctor Management", "Test Management", "Sales Reports"]
+        choice = st.sidebar.selectbox("Admin Menu", menu)
+
+        if choice == "User Management":
+            st.subheader("👥 User Management")
+            nu, np = st.text_input("Username"), st.text_input("Password")
+            nr = st.selectbox("Role", ["Admin", "Billing", "Technician"])
+            if st.button("Add User"):
+                c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr))
+                conn.commit()
+                st.success("User Added")
+            st.dataframe(pd.read_sql_query("SELECT username, role FROM users", conn), use_container_width=True)
+
+        elif choice == "Doctor Management":
+            st.subheader("👨‍⚕️ Manage Doctors")
+            dn = st.text_input("Doctor Name")
+            if st.button("Add Doctor"):
+                c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,))
+                conn.commit()
+                st.success("Doctor Added")
+            st.dataframe(pd.read_sql_query("SELECT * FROM doctors", conn), use_container_width=True)
+
+        elif choice == "Test Management":
+            st.subheader("🧪 Manage Tests")
+            tn = st.text_input("Test Name")
+            tp = st.number_input("Price")
+            if st.button("Save Test"):
+                c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp))
+                conn.commit()
+                st.success("Test Saved")
+            st.dataframe(pd.read_sql_query("SELECT * FROM tests", conn), use_container_width=True)
+            
+        elif choice == "Sales Reports":
+            st.subheader("📊 Daily Sales")
+            d = st.date_input("Date", date.today())
+            df = pd.read_sql_query(f"SELECT * FROM billing WHERE date='{d}'", conn)
+            st.dataframe(df)
+            st.metric("Total Income", f"LKR {df['final_amount'].sum():,.2f}")
+
+    # --- BILLING INTERFACE ---
+    elif st.session_state.user_role == "Billing":
         tab1, tab2 = st.tabs(["📝 New Registration", "📂 Saved Bills"])
-        
         with tab1:
-            st.subheader("Patient Registration")
             col1, col2, col3 = st.columns(3)
             with col1:
-                salute = st.selectbox("Salutation", ["Mr", "Mrs", "Mast", "Miss", "Baby", "Baby of Mrs", "Rev"])
+                salute = st.selectbox("Salutation", ["Mr", "Mrs", "Mast", "Miss", "Rev"])
                 p_name = st.text_input("Full Name")
             with col2:
                 p_age = st.number_input("Age", 0, 120)
                 p_gender = st.selectbox("Gender", ["Male", "Female"])
             with col3:
-                p_mobile = st.text_input("Mobile Number")
+                p_mobile = st.text_input("Mobile")
                 docs = pd.read_sql_query("SELECT doc_name FROM doctors", conn)['doc_name'].tolist()
-                p_doc = st.selectbox("Referral Doctor", ["Self"] + docs)
+                p_doc = st.selectbox("Doctor", ["Self"] + docs)
 
             st.markdown("---")
-            tests_df = pd.read_sql_query("SELECT * FROM tests", conn)
-            test_opt = [f"{r['test_name']} - LKR {r['price']:,.2f}" for i, r in tests_df.iterrows()]
+            tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
+            test_opt = [f"{r['test_name']} - LKR {r['price']:,.2f}" for i, r in tests_db.iterrows()]
             selected = st.multiselect("Select Tests", test_opt)
             
-            # --- CALCULATIONS (නිවැරදි කරන ලදී) ---
-            full_amt = 0.0
-            test_names = []
-            for s in selected:
-                name_part = s.split(" - LKR")[0]
-                price_part = float(s.split(" - LKR")[-1].replace(',', ''))
-                full_amt += price_part
-                test_names.append(name_part)
+            # ගණනය කිරීම්
+            full_amt = sum([float(s.split(" - LKR")[-1].replace(',', '')) for s in selected])
+            st.info(f"Full Amount: LKR {full_amt:,.2f}")
+            discount = st.number_input("Discount (LKR)", 0.0)
+            final_amt = full_amt - discount
+            st.success(f"Final Amount: LKR {final_amt:,.2f}")
 
-            st.markdown("### Payment Summary")
-            calc_col1, calc_col2, calc_col3 = st.columns(3)
-            with calc_col1:
-                st.info(f"**Full Amount: LKR {full_amt:,.2f}**")
-            with calc_col2:
-                discount = st.number_input("Discount (LKR)", 0.0, step=10.0)
-            with calc_col3:
-                final_amt = full_amt - discount
-                st.success(f"**Final Amount: LKR {final_amt:,.2f}**")
-
-            if st.button("Confirm & Generate Bill", use_container_width=True):
-                if p_name and test_names:
-                    new_ref = generate_ref_no()
-                    c.execute('''INSERT INTO billing 
-                        (ref_no, salute, name, age, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) 
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-                        (new_ref, salute, p_name, p_age, p_gender, p_mobile, p_doc, ", ".join(test_names), full_amt, discount, final_amt, str(date.today()), st.session_state.username, "Active"))
-                    conn.commit()
-                    st.success(f"Saved! Ref: {new_ref}")
-                    
-                    pdf_bytes = create_pdf(new_ref, salute, p_name, p_age, p_gender, p_mobile, p_doc, ", ".join(test_names), full_amt, discount, final_amt)
-                    st.download_button("📥 Download PDF Bill", pdf_bytes, file_name=f"{new_ref.replace('/','-')}.pdf")
-                else: st.error("Please enter name and select tests.")
+            if st.button("Generate & Save Bill"):
+                ref = generate_ref_no()
+                c.execute("INSERT INTO billing (ref_no, salute, name, age, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (ref, salute, p_name, p_age, p_gender, p_mobile, p_doc, str(selected), full_amt, discount, final_amt, str(date.today()), st.session_state.username, "Active"))
+                conn.commit()
+                st.success(f"Saved! Ref: {ref}")
+                pdf_b = create_pdf(ref, salute, p_name, p_age, p_gender, p_mobile, p_doc, str(selected), full_amt, discount, final_amt)
+                st.download_button("📥 Download PDF", pdf_b, file_name=f"{ref.replace('/','-')}.pdf")
 
         with tab2:
-            st.subheader("All Saved Bills")
-            bills_df = pd.read_sql_query("SELECT ref_no, name, tests, final_amount, date FROM billing ORDER BY id DESC", conn)
-            st.dataframe(bills_df, use_container_width=True)
-
-    elif st.session_state.user_role == "Admin":
-        # (Admin Code for Doctor/Test Management as before)
-        pass
+            st.subheader("Saved Bills")
+            all_b = pd.read_sql_query("SELECT ref_no, name, final_amount, date FROM billing ORDER BY id DESC", conn)
+            st.dataframe(all_b, use_container_width=True)
 
 conn.close()
