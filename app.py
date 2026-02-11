@@ -1,15 +1,16 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import date, datetime
+from datetime import date
 
 # --- DATABASE SETUP ---
 def init_db():
-    # මෙහිදී v3 ලෙස නම වෙනස් කිරීමෙන් පරණ දත්ත ගැටළු මගහැරේ
-    conn = sqlite3.connect('lims_v3_secure.db', check_same_thread=False)
+    conn = sqlite3.connect('lims_v4_doctor_mgmt.db', check_same_thread=False)
     c = conn.cursor()
     # Users Table
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
+    # Doctors Table
+    c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
     # Tests Table
     c.execute('CREATE TABLE IF NOT EXISTS tests (test_name TEXT PRIMARY KEY, price REAL)')
     # Billing Table
@@ -20,7 +21,6 @@ def init_db():
     # Cancel Requests
     c.execute('CREATE TABLE IF NOT EXISTS cancel_requests (bill_id INTEGER, reason TEXT, status TEXT, requested_by TEXT)')
     
-    # පද්ධතියේ පළමු Admin වරයා සෑදීම
     c.execute("INSERT OR IGNORE INTO users VALUES ('admin', 'admin123', 'Admin')")
     conn.commit()
     return conn
@@ -29,107 +29,127 @@ conn = init_db()
 c = conn.cursor()
 
 # --- UI SETTINGS ---
-st.set_page_config(page_title="Secure LIMS - Login", layout="wide")
+st.set_page_config(page_title="LIMS v4 - Doctor Management", layout="wide")
 
 if 'logged_in' not in st.session_state:
     st.session_state.update({'logged_in': False, 'user_role': None, 'username': None})
 
 # --- LOGIN PAGE ---
 if not st.session_state.logged_in:
-    st.markdown("<h2 style='text-align: center;'>🔬 Laboratory Information Management System</h2>", unsafe_allow_html=True)
-    
+    st.markdown("<h2 style='text-align: center;'>🔬 Laboratory Information System</h2>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1.5, 1])
     with col2:
         with st.form("login_form"):
-            st.subheader("🔑 Secure Login")
             l_user = st.text_input("Username")
             l_pw = st.text_input("Password", type="password")
-            l_role = st.selectbox("Select Your Role", ["Admin", "Billing", "Technician", "Satellite"])
-            submit_login = st.form_submit_button("Login to System", use_container_width=True)
-            
-            if submit_login:
-                # Username, Password සහ Role යන තුනම එකවර පරීක්ෂා කරයි
+            l_role = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
+            if st.form_submit_button("Login", use_container_width=True):
                 c.execute('SELECT * FROM users WHERE username=? AND password=? AND role=?', (l_user, l_pw, l_role))
-                user_data = c.fetchone()
-                
-                if user_data:
+                if c.fetchone():
                     st.session_state.update({'logged_in': True, 'user_role': l_role, 'username': l_user})
-                    st.success("Login Successful!")
                     st.rerun()
-                else:
-                    st.error("Access Denied! Check Username, Password and Role again.")
+                else: st.error("Access Denied!")
 
-# --- AFTER LOGIN ---
+# --- LOGGED IN ---
 else:
     st.sidebar.title(f"👤 {st.session_state.username}")
-    st.sidebar.write(f"Level: **{st.session_state.user_role}**")
-    if st.sidebar.button("Logout", use_container_width=True):
+    if st.sidebar.button("Logout"):
         st.session_state.logged_in = False
         st.rerun()
 
-    # --- 1. ADMIN DASHBOARD ---
+    # --- ADMIN ---
     if st.session_state.user_role == "Admin":
-        menu = ["User Management", "Test/Service Management", "Sales Reports", "Approvals"]
+        menu = ["User Management", "Doctor Management", "Test Management", "Sales Reports", "Approvals"]
         choice = st.sidebar.selectbox("Admin Menu", menu)
 
-        if choice == "User Management":
-            st.subheader("System User Control")
-            # අලුත් පරිශීලකයන් එක් කිරීමේ කොටස
-            with st.expander("➕ Add New User (Staff)"):
-                new_u = st.text_input("Username")
-                new_p = st.text_input("Password")
-                new_r = st.selectbox("Assign Role", ["Admin", "Billing", "Technician", "Satellite"])
-                if st.button("Create Account"):
-                    if new_u and new_p:
-                        c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (new_u, new_p, new_r))
-                        conn.commit()
-                        st.success(f"User {new_u} added as {new_r}")
-                    else: st.error("Fields cannot be empty")
+        if choice == "Doctor Management":
+            st.subheader("👨‍⚕️ Manage Referral Doctors")
             
-            st.write("### Current Active Users")
-            users_list = pd.read_sql_query("SELECT username, role FROM users", conn)
-            st.dataframe(users_list, use_container_width=True)
+            # Add Doctor
+            with st.expander("Add New Doctor"):
+                d_name = st.text_input("Doctor's Name (e.g., Dr. Kamal)")
+                if st.button("Add Doctor"):
+                    if d_name:
+                        c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (d_name,))
+                        conn.commit()
+                        st.success("Doctor Added!")
+                    else: st.warning("Enter a name.")
 
-        elif choice == "Test/Service Management":
-            st.subheader("Manage Services & Pricing")
-            t_n = st.text_input("Service Name")
-            t_p = st.number_input("Price (LKR)", min_value=0.0)
-            if st.button("Save/Update Service"):
+            # View, Edit & Delete Doctors
+            st.write("### Registered Doctors")
+            doc_df = pd.read_sql_query("SELECT * FROM doctors", conn)
+            
+            for index, row in doc_df.iterrows():
+                col1, col2, col3 = st.columns([3, 1, 1])
+                col1.write(row['doc_name'])
+                if col2.button("Delete", key=f"del_{row['id']}"):
+                    c.execute("DELETE FROM doctors WHERE id=?", (row['id'],))
+                    conn.commit()
+                    st.rerun()
+                # Edit පහසුකම (සරලව)
+                new_n = col3.text_input("New Name", key=f"edit_{row['id']}", placeholder="Rename...")
+                if new_n:
+                    if st.button("Update", key=f"up_{row['id']}"):
+                        c.execute("UPDATE doctors SET doc_name=? WHERE id=?", (new_n, row['id']))
+                        conn.commit()
+                        st.rerun()
+
+        elif choice == "User Management":
+            st.subheader("Manage Staff")
+            u_n = st.text_input("Username")
+            u_p = st.text_input("Password")
+            u_r = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
+            if st.button("Create Account"):
+                c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (u_n, u_p, u_r))
+                conn.commit()
+                st.success("Staff member added.")
+            st.dataframe(pd.read_sql_query("SELECT username, role FROM users", conn))
+
+        elif choice == "Test Management":
+            st.subheader("Test Pricing")
+            t_n = st.text_input("Test Name")
+            t_p = st.number_input("Price (LKR)")
+            if st.button("Save Test"):
                 c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (t_n, t_p))
                 conn.commit()
-                st.success("Test list updated")
-            st.dataframe(pd.read_sql_query("SELECT * FROM tests", conn), use_container_width=True)
+                st.success("Updated.")
+            st.dataframe(pd.read_sql_query("SELECT * FROM tests", conn))
 
-    # --- 2. BILLING DASHBOARD ---
+    # --- BILLING ---
     elif st.session_state.user_role == "Billing":
-        menu = ["New Registration", "Recall", "My Summary", "Cancel Request"]
+        menu = ["New Registration", "Summary", "Recall"]
         choice = st.sidebar.selectbox("Billing Menu", menu)
-        
-        if choice == "New Registration":
-            st.subheader("Patient Billing")
-            c1, c2 = st.columns(2)
-            with c1:
-                salute = st.selectbox("Salutation", ["Mr", "Mrs", "Mast", "Miss", "Baby", "Baby of Mrs", "Rev"])
-                p_name = st.text_input("Name")
-                p_age = st.number_input("Age", 0, 120)
-            with c2:
-                p_gender = st.selectbox("Gender", ["Male", "Female"])
-                p_mobile = st.text_input("Mobile Number")
-                p_doc = st.text_input("Referral Doctor")
 
-            tests_df = pd.read_sql_query("SELECT * FROM tests", conn)
-            selected = st.multiselect("Select Tests", tests_df['test_name'].tolist())
-            
-            subtotal = sum(tests_df[tests_df['test_name'].isin(selected)]['price'])
-            st.write(f"Sub Total: Rs. {subtotal:,.2f}")
-            dis = st.number_input("Discount", 0.0)
-            final = subtotal - dis
-            st.header(f"Grand Total: Rs. {final:,.2f}")
-            
-            if st.button("Save & Complete Bill"):
-                c.execute("INSERT INTO billing (salute, name, age, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                          (salute, p_name, p_age, p_gender, p_mobile, p_doc, ", ".join(selected), subtotal, dis, final, str(date.today()), st.session_state.username, "Active"))
-                conn.commit()
-                st.success("Bill Registered Successfully!")
+        if choice == "New Registration":
+            st.subheader("New Patient Bill")
+            with st.form("billing_form"):
+                # Tab order එක ස්වයංක්‍රීයව පිළිවෙළට වැඩ කරයි
+                col1, col2 = st.columns(2)
+                with col1:
+                    salute = st.selectbox("Salutation", ["Mr", "Mrs", "Mast", "Miss", "Baby", "Baby of Mrs", "Rev"])
+                    p_name = st.text_input("Full Name")
+                    p_age = st.number_input("Age", 0, 120)
+                with col2:
+                    p_gender = st.selectbox("Gender", ["Male", "Female"])
+                    p_mobile = st.text_input("Mobile Number")
+                    
+                    # Doctors Dropdown from Database
+                    doc_list = pd.read_sql_query("SELECT doc_name FROM doctors", conn)['doc_name'].tolist()
+                    p_doc = st.selectbox("Select Referral Doctor", ["Self"] + doc_list)
+
+                st.markdown("---")
+                tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
+                selected = st.multiselect("Select Tests", tests_db['test_name'].tolist())
+                
+                dis = st.number_input("Discount (LKR)", 0.0)
+                submit_bill = st.form_submit_button("Complete & Print Bill", use_container_width=True)
+                
+                if submit_bill:
+                    subtotal = sum(tests_db[tests_db['test_name'].isin(selected)]['price'])
+                    final = subtotal - dis
+                    c.execute("INSERT INTO billing (salute, name, age, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                              (salute, p_name, p_age, p_gender, p_mobile, p_doc, ", ".join(selected), subtotal, dis, final, str(date.today()), st.session_state.username, "Active"))
+                    conn.commit()
+                    st.success(f"Bill Generated! Total: LKR {final:,.2f}")
 
 conn.close()
