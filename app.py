@@ -7,7 +7,7 @@ import base64
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lims_v14_final.db', check_same_thread=False)
+    conn = sqlite3.connect('lims_v15_final.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -32,11 +32,10 @@ def generate_ref_no():
     ref = f"LC/{now.strftime('%d/%m/%y')}/{count:02d}"
     return ref
 
-# --- PDF GENERATION & SAFE VIEW FUNCTION ---
+# --- SAFE PDF VIEW LINK ---
 def get_pdf_download_link(ref_no, salute, name, age, gender, mobile, doctor, tests, total, discount, final):
     pdf = FPDF()
     pdf.add_page()
-    
     try:
         pdf.image("logo.png", 10, 8, 30)
     except:
@@ -77,12 +76,9 @@ def get_pdf_download_link(ref_no, salute, name, age, gender, mobile, doctor, tes
     pdf.cell(160, 10, "Final Amount (LKR):", align='R', fill=True)
     pdf.cell(30, 10, f"{final:,.2f}", ln=True, align='R', fill=True)
     
-    # PDF එක සෘජුව Open කිරීමට අවශ්‍ය Link එක සැකසීම
     binary_pdf = pdf.output(dest='S').encode('latin-1')
     base64_pdf = base64.b64encode(binary_pdf).decode('utf-8')
-    
-    # Browser එකෙන් block නොවන පරිදි HTML Link එකක් ලබා දීම
-    href = f'<a href="data:application/pdf;base64,{base64_pdf}" target="_blank" style="text-decoration: none; background-color: #4CAF50; color: white; padding: 10px 20px; border-radius: 5px; font-weight: bold;">📄 Click Here to View & Print Bill (Open in New Tab)</a>'
+    href = f'<a href="data:application/pdf;base64,{base64_pdf}" target="_blank" style="text-decoration: none; background-color: #28a745; color: white; padding: 12px 24px; border-radius: 5px; font-weight: bold; display: inline-block;">📄 View & Print Invoice (New Tab)</a>'
     return href
 
 # --- UI SETTINGS ---
@@ -100,7 +96,7 @@ if not st.session_state.logged_in:
             u = st.text_input("Username")
             p = st.text_input("Password", type="password")
             r = st.selectbox("Role", ["Admin", "Billing"])
-            if st.form_submit_button("Login to System", use_container_width=True):
+            if st.form_submit_button("Login", use_container_width=True):
                 c.execute('SELECT * FROM users WHERE username=? AND password=? AND role=?', (u, p, r))
                 if c.fetchone():
                     st.session_state.update({'logged_in': True, 'user_role': r, 'username': u})
@@ -113,9 +109,74 @@ else:
         st.session_state.logged_in = False
         st.rerun()
 
-    if st.session_state.user_role == "Billing":
-        tab1, tab2 = st.tabs(["📝 New Registration", "📂 Saved Bills"])
+    # --- ADMIN DASHBOARD (නිවැරදි කරන ලද කොටස) ---
+    if st.session_state.user_role == "Admin":
+        menu = ["Test Management", "User Management", "Doctor Management", "Sales Reports"]
+        choice = st.sidebar.selectbox("Admin Menu", menu)
         
+        if choice == "Test Management":
+            st.subheader("🧪 Manage Tests")
+            with st.form("t_form"):
+                tn = st.text_input("Test Name")
+                tp = st.number_input("Price (LKR)", min_value=0.0)
+                if st.form_submit_button("Save Test"):
+                    c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp))
+                    conn.commit()
+                    st.success("Test Saved!")
+                    st.rerun()
+            
+            st.write("### Current Tests")
+            t_data = pd.read_sql_query("SELECT * FROM tests", conn)
+            for i, r in t_data.iterrows():
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.write(r['test_name'])
+                c2.write(f"LKR {r['price']:,.2f}")
+                if c3.button("Delete", key=f"dt_{r['test_name']}"):
+                    c.execute("DELETE FROM tests WHERE test_name=?", (r['test_name'],))
+                    conn.commit()
+                    st.rerun()
+
+        elif choice == "User Management":
+            st.subheader("👥 System User Management")
+            with st.form("u_form"):
+                nu = st.text_input("New Username")
+                np = st.text_input("New Password")
+                nr = st.selectbox("Assign Role", ["Admin", "Billing"])
+                if st.form_submit_button("Create User"):
+                    c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr))
+                    conn.commit()
+                    st.success("User Added!")
+            st.dataframe(pd.read_sql_query("SELECT username, role FROM users", conn), use_container_width=True)
+
+        elif choice == "Doctor Management":
+            st.subheader("👨‍⚕️ Manage Doctors")
+            with st.form("d_form"):
+                dn = st.text_input("Doctor Name")
+                if st.form_submit_button("Add Doctor"):
+                    c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,))
+                    conn.commit()
+                    st.success("Doctor Added!")
+            
+            st.write("### Registered Doctors")
+            d_data = pd.read_sql_query("SELECT * FROM doctors", conn)
+            for i, r in d_data.iterrows():
+                c1, c2 = st.columns([4, 1])
+                c1.write(r['doc_name'])
+                if c2.button("Delete", key=f"dd_{r['id']}"):
+                    c.execute("DELETE FROM doctors WHERE id=?", (r['id'],))
+                    conn.commit()
+                    st.rerun()
+
+        elif choice == "Sales Reports":
+            st.subheader("📊 Daily Sales Overview")
+            d_filter = st.date_input("Select Date", date.today())
+            sales_df = pd.read_sql_query(f"SELECT ref_no, name, final_amount, bill_user FROM billing WHERE date='{d_filter}'", conn)
+            st.dataframe(sales_df, use_container_width=True)
+            st.metric("Total Income", f"LKR {sales_df['final_amount'].sum():,.2f}")
+
+    # --- BILLING DASHBOARD ---
+    elif st.session_state.user_role == "Billing":
+        tab1, tab2 = st.tabs(["📝 New Bill", "📂 Saved Bills"])
         with tab1:
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -125,7 +186,7 @@ else:
                 p_age = st.number_input("Age", 0, 120)
                 p_gender = st.selectbox("Gender", ["Male", "Female"])
             with col3:
-                p_mobile = st.text_input("Mobile Number")
+                p_mobile = st.text_input("Mobile")
                 docs = pd.read_sql_query("SELECT doc_name FROM doctors", conn)['doc_name'].tolist()
                 p_doc = st.selectbox("Referral Doctor", ["Self"] + docs)
 
@@ -135,43 +196,23 @@ else:
             selected = st.multiselect("Select Tests", test_opt)
             
             full_amt = sum([float(s.split(" - LKR")[-1].replace(',', '')) for s in selected])
-            discount = st.number_input("Discount (LKR)", min_value=0.0)
+            discount = st.number_input("Discount (LKR)", 0.0)
             final_amt = full_amt - discount
-            
-            st.markdown(f"### Final Amount: **LKR {final_amt:,.2f}**")
+            st.markdown(f"### Total: **LKR {final_amt:,.2f}**")
 
-            if st.button("Generate Bill", use_container_width=True):
+            if st.button("Save & Generate Bill", use_container_width=True):
                 if p_name and selected:
                     ref = generate_ref_no()
                     test_list = ", ".join([s.split(" - LKR")[0] for s in selected])
                     c.execute("INSERT INTO billing (ref_no, salute, name, age, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                               (ref, salute, p_name, p_age, p_gender, p_mobile, p_doc, test_list, full_amt, discount, final_amt, str(date.today()), st.session_state.username, "Active"))
                     conn.commit()
-                    
-                    st.success(f"Bill Saved! Ref: {ref}")
-                    # Browser එකෙන් block නොවන ආරක්ෂිත Link එකක් පෙන්වීම
+                    st.success(f"Success! Ref: {ref}")
                     pdf_link = get_pdf_download_link(ref, salute, p_name, p_age, p_gender, p_mobile, p_doc, test_list, full_amt, discount, final_amt)
                     st.markdown(pdf_link, unsafe_allow_html=True)
-                else:
-                    st.error("Please fill all details.")
 
         with tab2:
-            st.subheader("All Saved Bills")
-            all_bills = pd.read_sql_query("SELECT ref_no, name, tests, final_amount, date FROM billing ORDER BY id DESC", conn)
-            st.dataframe(all_bills, use_container_width=True)
-
-    elif st.session_state.user_role == "Admin":
-        # (Admin dashboard code stays same as before...)
-        choice = st.sidebar.selectbox("Admin Menu", ["Test Management", "User Management", "Doctor Management"])
-        if choice == "Test Management":
-            st.subheader("🧪 Manage Tests")
-            tn = st.text_input("Test Name")
-            tp = st.number_input("Price")
-            if st.button("Save"):
-                c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp))
-                conn.commit()
-                st.rerun()
-            st.dataframe(pd.read_sql_query("SELECT * FROM tests", conn), use_container_width=True)
-        # Add other admin parts if needed...
+            st.subheader("Saved Bills")
+            st.dataframe(pd.read_sql_query("SELECT ref_no, name, tests, final_amount, date FROM billing ORDER BY id DESC", conn), use_container_width=True)
 
 conn.close()
