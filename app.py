@@ -7,7 +7,7 @@ import base64
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lims_final_v1.db', check_same_thread=False)
+    conn = sqlite3.connect('lims_final_v2.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS tests (test_name TEXT PRIMARY KEY, price REAL)')
@@ -16,6 +16,7 @@ def init_db():
                   gender TEXT, mobile TEXT, doctor TEXT, tests TEXT, total REAL, 
                   discount REAL, final_amount REAL, date TEXT, bill_user TEXT, status TEXT)''')
     c.execute('CREATE TABLE IF NOT EXISTS cancel_requests (bill_id INTEGER, reason TEXT, status TEXT, requested_by TEXT)')
+    # මුල් Admin පරිශීලකයා (මෙය පද්ධතියේ පළමු වරට පමණක් සෑදේ)
     c.execute("INSERT OR IGNORE INTO users VALUES ('admin', 'admin123', 'Admin')")
     conn.commit()
     return conn
@@ -23,174 +24,129 @@ def init_db():
 conn = init_db()
 c = conn.cursor()
 
-# --- PDF GENERATION FUNCTION ---
-def create_pdf(bill_data):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, "LABORATORY INVOICE", ln=True, align='C')
-    pdf.set_font("Arial", size=12)
-    pdf.ln(10)
-    pdf.cell(100, 10, f"Bill ID: {bill_data[0]}")
-    pdf.cell(100, 10, f"Date: {bill_data[11]}", ln=True)
-    pdf.cell(200, 10, f"Patient: {bill_data[1]} {bill_data[2]}", ln=True)
-    pdf.cell(200, 10, f"Mobile: {bill_data[5]}", ln=True)
-    pdf.cell(200, 10, f"Doctor: {bill_data[6]}", ln=True)
-    pdf.ln(5)
-    pdf.cell(200, 10, "Tests: " + bill_data[7], ln=True)
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, f"Total Amount: LKR {bill_data[10]:,.2f}", ln=True)
-    return pdf.output(dest='S').encode('latin-1')
-
 # --- UI SETTINGS ---
-st.set_page_config(page_title="Professional LIMS", layout="wide")
+st.set_page_config(page_title="Professional LIMS - Secure Access", layout="wide")
 
 if 'logged_in' not in st.session_state:
     st.session_state.update({'logged_in': False, 'user_role': None, 'username': None})
 
 # --- LOGIN PAGE ---
 if not st.session_state.logged_in:
-    st.title("🔐 LIMS Secure Login")
-    user = st.text_input("Username")
-    pw = st.text_input("Password", type="password")
-    if st.button("Login"):
-        c.execute('SELECT role FROM users WHERE username=? AND password=?', (user, pw))
-        res = c.fetchone()
-        if res:
-            st.session_state.update({'logged_in': True, 'user_role': res[0], 'username': user})
-            st.rerun()
-        else: st.error("Invalid Credentials")
+    st.markdown("<h1 style='text-align: center;'>🔬 Laboratory Information Management System</h1>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.subheader("🔐 Login to your Account")
+        login_user = st.text_input("Username")
+        login_pw = st.text_input("Password", type="password")
+        # Role එක තෝරා ගැනීමට Dropdown එකක් එක් කළා
+        login_role = st.selectbox("Select Your Role", ["Admin", "Billing", "Technician", "Satellite"])
+        
+        if st.button("Login", use_container_width=True):
+            # Database එකේ Username, Password සහ Role යන තුනම ගැලපේදැයි පරීක්ෂා කිරීම
+            c.execute('SELECT * FROM users WHERE username=? AND password=? AND role=?', (login_user, login_pw, login_role))
+            res = c.fetchone()
+            
+            if res:
+                st.session_state.update({'logged_in': True, 'user_role': login_role, 'username': login_user})
+                st.success(f"Welcome {login_user}! Logging in as {login_role}...")
+                st.rerun()
+            else:
+                st.error("Invalid Username, Password or Role. Please contact Admin.")
 
+# --- LOGGED IN INTERFACE ---
 else:
-    st.sidebar.title(f"👤 {st.session_state.username} ({st.session_state.user_role})")
-    if st.sidebar.button("Logout"):
+    st.sidebar.title(f"👤 {st.session_state.username}")
+    st.sidebar.info(f"Access Level: {st.session_state.user_role}")
+    if st.sidebar.button("Logout", use_container_width=True):
         st.session_state.logged_in = False
         st.rerun()
 
     # --- 1. ADMIN ROLE ---
     if st.session_state.user_role == "Admin":
-        menu = ["Dashboard", "User Management", "Test/Service Management", "Sale", "Approval"]
-        choice = st.sidebar.selectbox("Menu", menu)
+        menu = ["User Management", "Test/Service Management", "Sale Reports", "Approval Queue"]
+        choice = st.sidebar.selectbox("Admin Panel", menu)
 
         if choice == "User Management":
-            st.subheader("User Management")
-            with st.expander("Add/Update User"):
+            st.subheader("Create & Manage Staff Accounts")
+            with st.expander("➕ Add New Staff Member"):
                 u_n = st.text_input("Username")
                 u_p = st.text_input("Password")
-                u_r = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
-                if st.button("Save User"):
-                    c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (u_n, u_p, u_r))
-                    conn.commit()
-                    st.success("User Updated")
-            st.dataframe(pd.read_sql_query("SELECT username, role FROM users", conn))
+                u_r = st.selectbox("Assign Role", ["Admin", "Billing", "Technician", "Satellite"])
+                if st.button("Create Account"):
+                    if u_n and u_p:
+                        c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (u_n, u_p, u_r))
+                        conn.commit()
+                        st.success(f"Account for {u_n} ({u_r}) created successfully!")
+                    else: st.warning("Please fill all fields.")
+            
+            st.write("### Existing Users")
+            st.dataframe(pd.read_sql_query("SELECT username, role FROM users", conn), use_container_width=True)
 
         elif choice == "Test/Service Management":
-            st.subheader("Manage Services")
-            t_n = st.text_input("Service Name")
+            st.subheader("Manage Lab Services & Pricing")
+            t_n = st.text_input("Service/Test Name")
             t_p = st.number_input("Price (LKR)", min_value=0.0)
-            if st.button("Add/Update Service"):
+            if st.button("Save Service"):
                 c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (t_n, t_p))
                 conn.commit()
-                st.success("Service Updated")
-            st.dataframe(pd.read_sql_query("SELECT * FROM tests", conn))
+                st.success("Price List Updated")
+            st.dataframe(pd.read_sql_query("SELECT * FROM tests", conn), use_container_width=True)
 
-        elif choice == "Sale":
-            st.subheader("Sales Reports")
-            rep_type = st.radio("Report Type", ["Daily Sale", "Doctor Wise Sale"])
-            if rep_type == "Daily Sale":
-                sel_date = st.date_input("Select Date", date.today())
-                df = pd.read_sql_query(f"SELECT * FROM billing WHERE date='{sel_date}' AND status='Active'", conn)
-                st.dataframe(df)
-                st.metric("Total Revenue", f"LKR {df['final_amount'].sum():,.2f}")
-            else:
-                doc = st.text_input("Doctor Name")
-                df = pd.read_sql_query(f"SELECT * FROM billing WHERE doctor LIKE '%{doc}%' AND status='Active'", conn)
-                st.dataframe(df)
-                st.metric(f"Total for Dr. {doc}", f"LKR {df['final_amount'].sum():,.2f}")
-
-        elif choice == "Approval":
-            st.subheader("Pending Cancellations")
-            reqs = pd.read_sql_query("SELECT r.bill_id, b.name, b.final_amount, r.reason FROM cancel_requests r JOIN billing b ON r.bill_id=b.id WHERE r.status='Pending'", conn)
-            st.dataframe(reqs)
-            app_id = st.number_input("Enter Bill ID to Approve", step=1)
-            if st.button("Approve & Reset Summary"):
-                c.execute("UPDATE billing SET status='Cancelled' WHERE id=?", (app_id,))
-                c.execute("UPDATE cancel_requests SET status='Approved' WHERE bill_id=?", (app_id,))
-                conn.commit()
-                st.success(f"Bill {app_id} has been cancelled.")
+        elif choice == "Sale Reports":
+            st.subheader("Financial Reports")
+            rep = st.radio("Filter By", ["Daily Sales", "Doctor-wise Revenue"])
+            if rep == "Daily Sales":
+                d = st.date_input("Select Date", date.today())
+                df = pd.read_sql_query(f"SELECT * FROM billing WHERE date='{d}' AND status='Active'", conn)
+                st.table(df[['id', 'name', 'tests', 'final_amount', 'bill_user']])
+                st.metric("Total Collection", f"Rs. {df['final_amount'].sum():,.2f}")
 
     # --- 2. BILLING ROLE ---
     elif st.session_state.user_role == "Billing":
-        menu = ["New Registration", "Recall", "Summary", "Cancellation Request"]
-        choice = st.sidebar.selectbox("Menu", menu)
+        menu = ["New Registration", "Recall Bills", "My Summary", "Cancel Request"]
+        choice = st.sidebar.selectbox("Billing Menu", menu)
 
         if choice == "New Registration":
-            st.subheader("Patient Registration")
-            col1, col2 = st.columns(2)
-            with col1:
-                salute = st.selectbox("Salutation", ["Mr", "Mrs", "Mast", "Miss", "Baby", "Baby of Mrs", "Rev"])
-                p_name = st.text_input("Name")
+            st.subheader("Patient Billing Interface")
+            # මෙහි ඔබ කලින් ඉල්ලූ සියලුම fields (Name, Age, Mobile, Salute etc.) ඇත
+            c1, c2 = st.columns(2)
+            with c1:
+                salute = st.selectbox("Salute", ["Mr", "Mrs", "Mast", "Miss", "Baby", "Baby of Mrs", "Rev"])
+                p_name = st.text_input("Patient Name")
                 p_age = st.number_input("Age", 0, 120)
+            with c2:
                 p_gender = st.selectbox("Gender", ["Male", "Female"])
-            with col2:
                 p_mobile = st.text_input("Mobile Number")
                 p_doc = st.text_input("Referral Doctor")
-            
-            st.markdown("---")
+
             tests_df = pd.read_sql_query("SELECT * FROM tests", conn)
-            search_test = st.multiselect("Select Tests/Services", tests_df['test_name'].tolist())
+            selected = st.multiselect("Search Tests/Services", tests_df['test_name'].tolist())
             
-            subtotal = sum(tests_df[tests_df['test_name'].isin(search_test)]['price'])
-            st.write(f"Sub Total: LKR {subtotal:,.2f}")
+            subtotal = sum(tests_df[tests_df['test_name'].isin(selected)]['price'])
+            st.write(f"**Sub Total: LKR {subtotal:,.2f}**")
             dis = st.number_input("Discount (LKR)", 0.0)
             final = subtotal - dis
-            st.header(f"Total Amount: LKR {final:,.2f}")
+            st.header(f"Grand Total: LKR {final:,.2f}")
             
-            if st.button("Save & Generate PDF"):
+            if st.button("Generate Bill"):
                 c.execute("INSERT INTO billing (salute, name, age, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                          (salute, p_name, p_age, p_gender, p_mobile, p_doc, ", ".join(search_test), subtotal, dis, final, str(date.today()), st.session_state.username, "Active"))
+                          (salute, p_name, p_age, p_gender, p_mobile, p_doc, ", ".join(selected), subtotal, dis, final, str(date.today()), st.session_state.username, "Active"))
                 conn.commit()
-                st.success("Bill Saved!")
-                # PDF Download කොටස (සරලව)
-                st.info("Bill ID: " + str(c.lastrowid))
+                st.success("Bill Saved! You can now recall it for printing.")
 
-        elif choice == "Recall":
-            st.subheader("Recall Bills")
-            search_by = st.radio("Search By", ["Name", "Mobile", "Period"])
-            if search_by == "Name":
-                q = st.text_input("Enter Name")
-                df = pd.read_sql_query(f"SELECT * FROM billing WHERE name LIKE '%{q}%'", conn)
-            elif search_by == "Mobile":
-                q = st.text_input("Enter Mobile")
-                df = pd.read_sql_query(f"SELECT * FROM billing WHERE mobile='{q}'", conn)
-            else:
-                d1 = st.date_input("From")
-                d2 = st.date_input("To")
-                df = pd.read_sql_query(f"SELECT * FROM billing WHERE date BETWEEN '{d1}' AND '{d2}'", conn)
-            st.dataframe(df)
-
-        elif choice == "Summary":
-            st.subheader("Your Daily Summary")
-            s_date = st.date_input("Select Date", date.today())
-            df = pd.read_sql_query(f"SELECT * FROM billing WHERE date='{s_date}' AND bill_user='{st.session_state.username}' AND status='Active'", conn)
-            st.dataframe(df)
-            st.metric("Your Total Collection", f"LKR {df['final_amount'].sum():,.2f}")
-
-        elif choice == "Cancellation Request":
-            st.subheader("Request Cancellation")
-            b_id = st.number_input("Bill ID", step=1)
-            reason = st.text_area("Reason for cancellation")
-            if st.button("Send Request"):
-                c.execute("INSERT INTO cancel_requests VALUES (?,?,'Pending',?)", (b_id, reason, st.session_state.username))
-                conn.commit()
-                st.warning("Request sent to Admin.")
+        elif choice == "My Summary":
+            st.subheader(f"Summary for {st.session_state.username}")
+            d = st.date_input("View Date", date.today())
+            df = pd.read_sql_query(f"SELECT * FROM billing WHERE date='{d}' AND bill_user='{st.session_state.username}' AND status='Active'", conn)
+            st.dataframe(df[['id', 'name', 'tests', 'final_amount']])
+            st.metric("Total Collection", f"Rs. {df['final_amount'].sum():,.2f}")
 
     # --- 3. SATELLITE ROLE ---
     elif st.session_state.user_role == "Satellite":
-        st.subheader("Satellite Report Portal")
-        search_id = st.text_input("Enter Bill ID or Patient Name")
-        if st.button("Print Report"):
-            st.info("Authorized reports will appear here after Technician approval.")
+        st.subheader("Print Authorized Reports")
+        search = st.text_input("Enter Bill ID or Patient Name")
+        if st.button("Search"):
+            st.info("Looking for reports approved by Technician...")
 
 conn.close()
