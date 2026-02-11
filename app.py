@@ -7,7 +7,7 @@ import io
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v23.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v24.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -16,7 +16,6 @@ def init_db():
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, ref_no TEXT, salute TEXT, name TEXT, age INTEGER, 
                   gender TEXT, mobile TEXT, doctor TEXT, tests TEXT, total REAL, 
                   discount REAL, final_amount REAL, date TEXT, bill_user TEXT, status TEXT)''')
-    # Default Admin
     c.execute("INSERT OR IGNORE INTO users VALUES ('admin', 'admin123', 'Admin')")
     conn.commit()
     return conn
@@ -95,44 +94,72 @@ else:
     if st.sidebar.button("Logout"):
         st.session_state.logged_in = False; st.rerun()
 
-    # --- ADMIN DASHBOARD (FIXED) ---
+    # --- ADMIN DASHBOARD ---
     if st.session_state.user_role == "Admin":
-        menu = st.sidebar.selectbox("Admin Menu", ["Test Management", "User Management", "Doctor Management", "Sales Reports"])
+        menu = st.sidebar.selectbox("Admin Menu", ["User Management", "Test Management", "Doctor Management", "Sales Reports"])
         
-        if menu == "Test Management":
+        if menu == "User Management":
+            st.subheader("👥 System User Management")
+            with st.form("new_user_form"):
+                nu = st.text_input("New Username")
+                np = st.text_input("Password")
+                nr = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
+                if st.form_submit_button("Create User"):
+                    if nu:
+                        c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr))
+                        conn.commit()
+                        st.success(f"User '{nu}' created!")
+                        st.rerun()
+                    else: st.error("Enter a username")
+            
+            st.write("---")
+            st.write("### Existing Users")
+            users_df = pd.read_sql_query("SELECT username, role FROM users", conn)
+            
+            # Delete button logic for users
+            for index, row in users_df.iterrows():
+                c1, c2, c3 = st.columns([3, 2, 1])
+                c1.write(f"**{row['username']}**")
+                c2.write(f"Role: {row['role']}")
+                if row['username'] != st.session_state.username: # දැනට ඉන්න userව delete කරන්න බැරි වෙන්න
+                    if c3.button("🗑️ Delete", key=f"user_{row['username']}"):
+                        c.execute("DELETE FROM users WHERE username=?", (row['username'],))
+                        conn.commit()
+                        st.success(f"User {row['username']} deleted!")
+                        st.rerun()
+                else:
+                    c3.write("(Active)")
+
+        elif menu == "Test Management":
             st.subheader("🧪 Manage Tests")
             with st.form("t"):
-                tn = st.text_input("Test Name")
-                tp = st.number_input("Price (LKR)", min_value=0.0)
-                if st.form_submit_button("Save Test"):
+                tn = st.text_input("Test Name"); tp = st.number_input("Price", min_value=0.0)
+                if st.form_submit_button("Save"):
                     c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.rerun()
-            st.dataframe(pd.read_sql_query("SELECT * FROM tests", conn), use_container_width=True)
-
-        elif menu == "User Management":
-            st.subheader("👥 System Users")
-            with st.form("u"):
-                nu = st.text_input("New Username"); np = st.text_input("Password")
-                nr = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
-                if st.form_submit_button("Add User"):
-                    c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr)); conn.commit(); st.success("User Added")
-            st.dataframe(pd.read_sql_query("SELECT username, role FROM users", conn), use_container_width=True)
+            
+            t_data = pd.read_sql_query("SELECT * FROM tests", conn)
+            for i, row in t_data.iterrows():
+                c1, c2, c3 = st.columns([3, 2, 1])
+                c1.write(row['test_name'])
+                c2.write(f"LKR {row['price']:,.2f}")
+                if c3.button("🗑️ Delete", key=f"test_{row['test_name']}"):
+                    c.execute("DELETE FROM tests WHERE test_name=?", (row['test_name'],)); conn.commit(); st.rerun()
 
         elif menu == "Doctor Management":
             st.subheader("👨‍⚕️ Manage Doctors")
             with st.form("d"):
                 dn = st.text_input("Doctor Name")
                 if st.form_submit_button("Add Doctor"):
-                    c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.success("Doctor Added")
-            st.dataframe(pd.read_sql_query("SELECT * FROM doctors", conn), use_container_width=True)
+                    c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.rerun()
+            
+            d_data = pd.read_sql_query("SELECT * FROM doctors", conn)
+            for i, row in d_data.iterrows():
+                c1, c2 = st.columns([5, 1])
+                c1.write(row['doc_name'])
+                if c2.button("🗑️ Delete", key=f"doc_{row['id']}"):
+                    c.execute("DELETE FROM doctors WHERE id=?", (row['id'],)); conn.commit(); st.rerun()
 
-        elif menu == "Sales Reports":
-            st.subheader("📊 Sales Summary")
-            d_pick = st.date_input("Select Date", date.today())
-            sales = pd.read_sql_query(f"SELECT ref_no, name, final_amount FROM billing WHERE date='{d_pick}'", conn)
-            st.dataframe(sales, use_container_width=True)
-            st.metric("Total Income", f"LKR {sales['final_amount'].sum():,.2f}")
-
-    # --- BILLING DASHBOARD ---
+    # (Billing and Technician sections remain same as previous version...)
     elif st.session_state.user_role == "Billing":
         st.subheader("📝 Registration & Billing")
         c1, c2, c3 = st.columns(3)
@@ -156,7 +183,6 @@ else:
                 conn.commit(); st.success(f"Saved: {ref}")
             else: st.error("Incomplete Data")
 
-    # --- TECHNICIAN DASHBOARD ---
     elif st.session_state.user_role == "Technician":
         st.subheader("🔬 FBC Report Entry")
         pending = c.execute("SELECT ref_no, name, age, gender, salute FROM billing WHERE status='Active'").fetchall()
@@ -171,7 +197,7 @@ else:
                 with st.form("fbc_entry"):
                     c1, c2, c3 = st.columns(3); wbc = c1.number_input("WBC", value=7000); hb = c2.number_input("Hb", value=13.0); plt = c3.number_input("Platelet", value=250000)
                     st.write("Differential Counts (%)")
-                    d1, d2, d3, d4, d5 = st.columns(5); nt = d1.number_input("Neut", 0, 100, 60); ly = d2.number_input("Lymph", 0, 100, 30); mo = d3.number_input("Mono", 0, 100, 6); eo = d4.number_input("Eos", 0, 100, 3); ba = d5.number_input("Baso", 0, 100, 1)
+                    d1, d2, d3, d4, d5 = st.columns(5); nt = d1.number_input("Neut", 0, 100, 60); ly = d2.number_input("Lymph", 0, 100, 30); mo = d3.number_input("Mono", 0, 100, 6); eo = d4.number_input("Eos", 0, 100, 3); ba = d5.number_input("Baso", 0, 100, Ba=1)
                     
                     if st.form_submit_button("Generate Report"):
                         if nt+ly+mo+eo+ba == 100:
