@@ -7,7 +7,7 @@ import io
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v24.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v25.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -100,35 +100,18 @@ else:
         
         if menu == "User Management":
             st.subheader("👥 System User Management")
-            with st.form("new_user_form"):
-                nu = st.text_input("New Username")
-                np = st.text_input("Password")
-                nr = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
-                if st.form_submit_button("Create User"):
-                    if nu:
-                        c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr))
-                        conn.commit()
-                        st.success(f"User '{nu}' created!")
-                        st.rerun()
-                    else: st.error("Enter a username")
+            with st.form("new_u"):
+                nu = st.text_input("Username"); np = st.text_input("Password"); nr = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
+                if st.form_submit_button("Create"):
+                    c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr)); conn.commit(); st.rerun()
             
-            st.write("---")
-            st.write("### Existing Users")
             users_df = pd.read_sql_query("SELECT username, role FROM users", conn)
-            
-            # Delete button logic for users
-            for index, row in users_df.iterrows():
+            for i, row in users_df.iterrows():
                 c1, c2, c3 = st.columns([3, 2, 1])
-                c1.write(f"**{row['username']}**")
-                c2.write(f"Role: {row['role']}")
-                if row['username'] != st.session_state.username: # දැනට ඉන්න userව delete කරන්න බැරි වෙන්න
-                    if c3.button("🗑️ Delete", key=f"user_{row['username']}"):
-                        c.execute("DELETE FROM users WHERE username=?", (row['username'],))
-                        conn.commit()
-                        st.success(f"User {row['username']} deleted!")
-                        st.rerun()
-                else:
-                    c3.write("(Active)")
+                c1.write(row['username']); c2.write(row['role'])
+                if row['username'] != st.session_state.username:
+                    if c3.button("🗑️ Delete", key=f"u_{row['username']}"):
+                        c.execute("DELETE FROM users WHERE username=?", (row['username'],)); conn.commit(); st.rerun()
 
         elif menu == "Test Management":
             st.subheader("🧪 Manage Tests")
@@ -137,29 +120,14 @@ else:
                 if st.form_submit_button("Save"):
                     c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.rerun()
             
-            t_data = pd.read_sql_query("SELECT * FROM tests", conn)
-            for i, row in t_data.iterrows():
+            t_df = pd.read_sql_query("SELECT * FROM tests", conn)
+            for i, row in t_df.iterrows():
                 c1, c2, c3 = st.columns([3, 2, 1])
-                c1.write(row['test_name'])
-                c2.write(f"LKR {row['price']:,.2f}")
-                if c3.button("🗑️ Delete", key=f"test_{row['test_name']}"):
+                c1.write(row['test_name']); c2.write(f"LKR {row['price']:.2f}")
+                if c3.button("🗑️ Delete", key=f"t_{row['test_name']}"):
                     c.execute("DELETE FROM tests WHERE test_name=?", (row['test_name'],)); conn.commit(); st.rerun()
 
-        elif menu == "Doctor Management":
-            st.subheader("👨‍⚕️ Manage Doctors")
-            with st.form("d"):
-                dn = st.text_input("Doctor Name")
-                if st.form_submit_button("Add Doctor"):
-                    c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.rerun()
-            
-            d_data = pd.read_sql_query("SELECT * FROM doctors", conn)
-            for i, row in d_data.iterrows():
-                c1, c2 = st.columns([5, 1])
-                c1.write(row['doc_name'])
-                if c2.button("🗑️ Delete", key=f"doc_{row['id']}"):
-                    c.execute("DELETE FROM doctors WHERE id=?", (row['id'],)); conn.commit(); st.rerun()
-
-    # (Billing and Technician sections remain same as previous version...)
+    # --- BILLING DASHBOARD (PAYMENT DETAILS ADDED BACK) ---
     elif st.session_state.user_role == "Billing":
         st.subheader("📝 Registration & Billing")
         c1, c2, c3 = st.columns(3)
@@ -167,24 +135,33 @@ else:
         with c2: p_age = st.number_input("Age", 0, 120); p_gender = st.selectbox("Gender", ["Male", "Female"])
         with c3: p_mob = st.text_input("Mobile"); docs = [d[0] for d in c.execute("SELECT doc_name FROM doctors").fetchall()]; p_doc = st.selectbox("Doctor", ["Self"] + docs)
         
+        st.write("---")
         tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
         test_opt = [f"{r['test_name']} - LKR {r['price']:,.2f}" for i, r in tests_db.iterrows()]
         selected = st.multiselect("Select Tests", test_opt)
         
+        # Calculations
         full_amt = sum([float(s.split(" - LKR")[-1].replace(',', '')) for s in selected])
-        discount = st.number_input("Discount", 0.0); final_amt = full_amt - discount
-        st.metric("Final Payable", f"LKR {final_amt:,.2f}")
+        
+        st.markdown("### Payment Details")
+        col_a, col_b, col_c = st.columns(3)
+        with col_a: st.info(f"**Full Amount:** LKR {full_amt:,.2f}")
+        with col_b: discount = st.number_input("Discount (LKR)", min_value=0.0)
+        with col_c: 
+            final_amt = full_amt - discount
+            st.success(f"**Final Amount:** LKR {final_amt:,.2f}")
 
-        if st.button("Save Bill"):
+        if st.button("Save & Print Invoice", use_container_width=True):
             if p_name and selected:
                 ref = generate_ref_no(); t_names = ", ".join([s.split(" - LKR")[0] for s in selected])
                 c.execute("INSERT INTO billing (ref_no, salute, name, age, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                           (ref, salute, p_name, p_age, p_gender, p_mob, p_doc, t_names, full_amt, discount, final_amt, str(date.today()), st.session_state.username, "Active"))
-                conn.commit(); st.success(f"Saved: {ref}")
-            else: st.error("Incomplete Data")
+                conn.commit(); st.success(f"Invoice Saved: {ref}")
+            else: st.error("Please fill all details and select tests.")
 
+    # --- TECHNICIAN DASHBOARD ---
     elif st.session_state.user_role == "Technician":
-        st.subheader("🔬 FBC Report Entry")
+        st.subheader("🔬 Laboratory Report Entry")
         pending = c.execute("SELECT ref_no, name, age, gender, salute FROM billing WHERE status='Active'").fetchall()
         if pending:
             sel = st.selectbox("Select Patient", [f"{p[0]} - {p[1]}" for p in pending])
@@ -192,19 +169,19 @@ else:
                 ref = sel.split(" - ")[0]
                 p_info = [p for p in pending if p[0] == ref][0]
                 refs = get_ref_ranges(p_info[2], p_info[3])
-                st.info(f"Using **{refs['type']}** Reference Ranges")
+                st.info(f"Selected Format: **{refs['type']}**")
                 
                 with st.form("fbc_entry"):
                     c1, c2, c3 = st.columns(3); wbc = c1.number_input("WBC", value=7000); hb = c2.number_input("Hb", value=13.0); plt = c3.number_input("Platelet", value=250000)
                     st.write("Differential Counts (%)")
-                    d1, d2, d3, d4, d5 = st.columns(5); nt = d1.number_input("Neut", 0, 100, 60); ly = d2.number_input("Lymph", 0, 100, 30); mo = d3.number_input("Mono", 0, 100, 6); eo = d4.number_input("Eos", 0, 100, 3); ba = d5.number_input("Baso", 0, 100, Ba=1)
+                    d1, d2, d3, d4, d5 = st.columns(5); nt = d1.number_input("Neut", 0, 100, 60); ly = d2.number_input("Lymph", 0, 100, 30); mo = d3.number_input("Mono", 0, 100, 6); eo = d4.number_input("Eos", 0, 100, 3); ba = d5.number_input("Baso", 0, 100, 1)
                     
                     if st.form_submit_button("Generate Report"):
                         if nt+ly+mo+eo+ba == 100:
                             res = {'wbc':wbc, 'hb':hb, 'plt':plt, 'neut':nt, 'lymph':ly, 'mono':mo, 'eos':eo, 'baso':ba}
                             pdf = create_fbc_pdf({'name':p_info[1], 'age':p_info[2], 'gender':p_info[3], 'ref_no':ref, 'salute':p_info[4]}, res, refs)
-                            st.download_button("📥 Download PDF Report", pdf, f"FBC_{ref}.pdf", "application/pdf")
+                            st.download_button("📥 Download PDF Report", pdf, f"FBC_{ref}.pdf", "application/pdf", use_container_width=True)
                         else: st.error("Differential total must be 100%")
-        else: st.warning("No pending patients")
+        else: st.warning("No pending patients found.")
 
 conn.close()
