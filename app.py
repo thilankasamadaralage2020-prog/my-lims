@@ -8,7 +8,7 @@ import json
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v65.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v66.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -19,6 +19,7 @@ def init_db():
                   discount REAL, final_amount REAL, date TEXT, bill_user TEXT, status TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS results 
                  (bill_ref TEXT PRIMARY KEY, data TEXT, authorized_by TEXT, auth_date TEXT, format_used TEXT, comment TEXT)''')
+    # Default Admin
     c.execute("INSERT OR IGNORE INTO users VALUES ('admin', 'admin123', 'Admin')")
     conn.commit()
     return conn
@@ -32,7 +33,7 @@ LAB_ADDRESS = "In front of hospital, Kotuwegada, Katuwana"
 LAB_TEL = "0773326715"
 LOGO_PATH = "logo.png"
 
-# --- FBC & UFR DATA STRUCTURES ---
+# --- DATA STRUCTURES ---
 def get_fbc_structure(age_y, gender):
     return [
         {"label": "Total White Cell Count (WBC)", "unit": "cells/cu/mm", "range": "4000 - 11000"},
@@ -69,14 +70,14 @@ def create_report_pdf(bill_row, results_dict, auth_user, formats_to_print):
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     for fmt in formats_to_print:
         pdf.add_page()
-        # Header Section
+        # Header
         if os.path.exists(LOGO_PATH): pdf.image(LOGO_PATH, 10, 10, 33)
         pdf.set_font("Arial", 'B', 16); pdf.set_x(45); pdf.cell(0, 10, LAB_NAME.upper(), ln=True)
         pdf.set_font("Arial", '', 10); pdf.set_x(45); pdf.cell(0, 5, LAB_ADDRESS, ln=True)
         pdf.set_x(45); pdf.cell(0, 5, f"Tel: {LAB_TEL}", ln=True)
         pdf.ln(8); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(5)
 
-        # Patient Info Section (Formatted like original)
+        # Patient Info
         pdf.set_font("Arial", 'B', 10); curr_y = pdf.get_y()
         pdf.cell(100, 7, f"Patient Name : {bill_row['salute']} {bill_row['name']}")
         pdf.cell(0, 7, f"Ref. No : {bill_row['ref_no']}", ln=True)
@@ -90,7 +91,7 @@ def create_report_pdf(bill_row, results_dict, auth_user, formats_to_print):
         # Test Title
         pdf.set_font("Arial", 'BU', 12); pdf.cell(0, 10, fmt.upper(), ln=True, align='C'); pdf.ln(5)
 
-        # Table Headers
+        # Table Header
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(80, 8, "DESCRIPTION", 0); pdf.cell(35, 8, "RESULT", 0, 0, 'C')
         pdf.cell(35, 8, "UNIT", 0, 0, 'C'); pdf.cell(40, 8, "REF. RANGE", 0, 1, 'C')
@@ -126,14 +127,86 @@ if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if not st.session_state.logged_in:
     with st.columns([1,1,1])[1]:
         if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=200)
+        st.subheader("Login System")
         with st.form("login"):
             u = st.text_input("User"); p = st.text_input("Pass", type="password")
             r = st.selectbox("Role", ["Admin", "Billing", "Technician"])
             if st.form_submit_button("LOGIN"):
                 st.session_state.update({'logged_in':True, 'user_role':r, 'username':u}); st.rerun()
 else:
+    # --- ADMIN ROLE (FIXED) ---
+    if st.session_state.user_role == "Admin":
+        st.sidebar.title("Admin Panel")
+        choice = st.sidebar.radio("Go to", ["Manage Users", "Manage Doctors", "Manage Tests"])
+        
+        # 1. User Management
+        if choice == "Manage Users":
+            st.subheader("👤 User Management")
+            with st.form("add_user"):
+                c1, c2, c3 = st.columns(3)
+                new_u = c1.text_input("Username")
+                new_p = c2.text_input("Password")
+                new_r = c3.selectbox("Role", ["Admin", "Billing", "Technician"])
+                if st.form_submit_button("Create User"):
+                    try:
+                        c.execute("INSERT INTO users VALUES (?,?,?)", (new_u, new_p, new_r))
+                        conn.commit(); st.success(f"User {new_u} created!")
+                        st.rerun()
+                    except: st.error("Username already exists!")
+            
+            st.divider()
+            st.write("### Current Users")
+            users = pd.read_sql_query("SELECT username, role FROM users", conn)
+            for i, r in users.iterrows():
+                col1, col2, col3 = st.columns([2, 2, 1])
+                col1.write(f"**{r['username']}**"); col2.write(f"_{r['role']}_")
+                if r['username'] != 'admin':
+                    if col3.button("Delete", key=f"del_u_{r['username']}"):
+                        c.execute("DELETE FROM users WHERE username=?", (r['username'],))
+                        conn.commit(); st.rerun()
+
+        # 2. Doctor Management
+        elif choice == "Manage Doctors":
+            st.subheader("👨‍⚕️ Doctor Management")
+            with st.form("add_doc"):
+                doc_name = st.text_input("Doctor Name (e.g., Dr. Sisira)")
+                if st.form_submit_button("Add Doctor"):
+                    c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (doc_name,))
+                    conn.commit(); st.success("Doctor added!"); st.rerun()
+            
+            st.divider()
+            st.write("### Registered Doctors")
+            docs = pd.read_sql_query("SELECT * FROM doctors", conn)
+            for i, r in docs.iterrows():
+                col1, col2 = st.columns([4, 1])
+                col1.write(r['doc_name'])
+                if col2.button("Delete", key=f"del_d_{r['id']}"):
+                    c.execute("DELETE FROM doctors WHERE id=?", (r['id'],))
+                    conn.commit(); st.rerun()
+
+        # 3. Test Management
+        elif choice == "Manage Tests":
+            st.subheader("🧪 Test Management")
+            with st.form("add_test"):
+                c1, c2 = st.columns([3, 1])
+                t_name = c1.text_input("Test Name")
+                t_price = c2.number_input("Price (LKR)", min_value=0.0)
+                if st.form_submit_button("Save Test"):
+                    c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (t_name, t_price))
+                    conn.commit(); st.success("Test saved!"); st.rerun()
+            
+            st.divider()
+            st.write("### Test Catalog")
+            tests = pd.read_sql_query("SELECT * FROM tests", conn)
+            for i, r in tests.iterrows():
+                col1, col2, col3 = st.columns([3, 2, 1])
+                col1.write(r['test_name']); col2.write(f"LKR {r['price']:,.2f}")
+                if col3.button("Delete", key=f"del_t_{r['test_name']}"):
+                    c.execute("DELETE FROM tests WHERE test_name=?", (r['test_name'],))
+                    conn.commit(); st.rerun()
+
     # --- BILLING ROLE ---
-    if st.session_state.user_role == "Billing":
+    elif st.session_state.user_role == "Billing":
         t1, t2 = st.tabs(["New Bill", "Saved Bills"])
         with t1:
             with st.form("billing"):
