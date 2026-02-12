@@ -141,7 +141,6 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
             pdf.cell(140, 8, "Discount", 0, 0, 'R'); pdf.cell(50, 8, f"{bill_row['discount']:,.2f}", 0, 1, 'R')
             pdf.set_font("Arial", 'B', 10); pdf.cell(140, 8, "Net Amount", 0, 0, 'R'); pdf.cell(50, 8, f"{bill_row['final_amount']:,.2f}", 0, 1, 'R')
         
-        # Safe Output
         return pdf.output(dest='S').encode('latin-1', 'ignore')
     except Exception as e:
         return f"PDF Error: {str(e)}".encode('latin-1')
@@ -168,7 +167,21 @@ else:
             with st.form("u"):
                 un = st.text_input("Name"); pw = st.text_input("Pass"); rl = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
                 if st.form_submit_button("Save"): c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (un, pw, rl)); conn.commit(); st.rerun()
-            u_df = pd.read_sql_query("SELECT username, role FROM users", conn); st.table(u_df)
+            
+            st.write("### Current Users")
+            u_df = pd.read_sql_query("SELECT username, role FROM users", conn)
+            for i, r in u_df.iterrows():
+                col1, col2, col3 = st.columns([2, 2, 1])
+                col1.write(f"**{r['username']}**")
+                col2.write(r['role'])
+                if r['username'] != 'admin': # Admin can't delete themselves
+                    if col3.button("🗑️ Delete", key=f"del_{r['username']}"):
+                        c.execute("DELETE FROM users WHERE username=?", (r['username'],))
+                        conn.commit()
+                        st.rerun()
+                else:
+                    col3.write("🛡️ Protected")
+
         elif choice == "Doctors":
             dn = st.text_input("Doctor Name")
             if st.button("Add"): c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.rerun()
