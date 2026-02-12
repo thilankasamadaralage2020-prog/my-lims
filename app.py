@@ -8,7 +8,7 @@ import json
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v59.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v60.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -18,7 +18,7 @@ def init_db():
                   gender TEXT, mobile TEXT, doctor TEXT, tests TEXT, total REAL, 
                   discount REAL, final_amount REAL, date TEXT, bill_user TEXT, status TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS results 
-                 (bill_ref TEXT PRIMARY KEY, data TEXT, authorized_by TEXT, auth_date TEXT, format_used TEXT)''')
+                 (bill_ref TEXT PRIMARY KEY, data TEXT, authorized_by TEXT, auth_date TEXT, format_used TEXT, comment TEXT)''')
     c.execute("INSERT OR IGNORE INTO users VALUES ('admin', 'admin123', 'Admin')")
     conn.commit()
     return conn
@@ -47,7 +47,7 @@ def get_fbc_structure(age_y, gender):
     return [{"label": c, "unit": units[c], "range": ranges.get(c, "")} for c in components]
 
 # --- PDF GENERATOR ---
-def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False):
+def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, comment=""):
     pdf = FPDF()
     pdf.add_page()
     if os.path.exists(LOGO_PATH): pdf.image(LOGO_PATH, 12, 10, 30)
@@ -71,8 +71,20 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False):
         for item in fbc_data:
             res_val = results_dict.get(item['label'], "")
             pdf.cell(70, 7, f"  {item['label']}", 0); pdf.cell(30, 7, str(res_val), 0, 0, 'C'); pdf.cell(30, 7, item['unit'], 0, 0, 'C'); pdf.cell(60, 7, item['range'], 0, 1, 'C')
+        
+        # --- COMMENT BOX SECTION ---
+        pdf.ln(10)
+        pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "Comments / Remarks:", ln=True)
+        pdf.set_font("Arial", '', 10)
+        # Multi-line box for comment
+        pdf.rect(10, pdf.get_y(), 190, 20)
+        pdf.set_y(pdf.get_y() + 2)
+        pdf.set_x(12)
+        pdf.multi_cell(186, 5, comment if comment else "N/A")
+        
         pdf.ln(15); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 10, f"Authorized by: {auth_user}", 0, 1, 'R')
     else:
+        # Invoice Section...
         pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "INVOICE", ln=True, align='C'); pdf.ln(5)
         pdf.set_font("Arial", 'B', 10); pdf.cell(140, 8, "Description", 0); pdf.cell(50, 8, "Amount (LKR)", 0, 1, 'R')
         pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2)
@@ -148,14 +160,13 @@ else:
                         c.execute("INSERT INTO billing (ref_no, salute, name, age_y, age_m, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (ref, sal, pname, ay, am, gen, mob, pdoc, tn, gross, disc, final, str(date.today()), st.session_state.username, "Active"))
                         conn.commit(); st.session_state.viewing_bill = ref; st.rerun()
 
-    # --- TECHNICIAN WORKSPACE (WITH BACK TABS) ---
+    # --- TECHNICIAN WORKSPACE ---
     elif st.session_state.user_role == "Technician":
         st.subheader("🔬 Technician Workspace")
         
-        # 1. Results Entry Panel
         if st.session_state.editing_ref:
             row = pd.read_sql_query(f"SELECT * FROM billing WHERE ref_no='{st.session_state.editing_ref}'", conn).iloc[0]
-            if st.button("⬅️ Back to Pending List"): st.session_state.editing_ref = None; st.rerun()
+            if st.button("⬅️ Back to List"): st.session_state.editing_ref = None; st.rerun()
             st.markdown(f"### FBC Result Entry: **{row['name']}**")
             f_struct = get_fbc_structure(row['age_y'], row['gender'])
             with st.form("res_f"):
@@ -164,46 +175,46 @@ else:
                     cl1, cl2, cl3 = st.columns([3, 1, 2])
                     results[item['label']] = cl1.text_input(item['label'], key=f"i_{row['ref_no']}_{item['label']}")
                     cl2.write(f"\n{item['unit']}"); cl3.caption(f"Ref: {item['range']}")
+                
+                # --- ADD COMMENT AREA IN FORM ---
+                st.write("---")
+                user_comment = st.text_area("Report Comments / Remarks", help="Add a short note about the report here.")
+                
                 if st.form_submit_button("AUTHORIZE REPORT"):
-                    c.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?)", (row['ref_no'], json.dumps(results), st.session_state.username, str(date.today()), "FBC"))
+                    c.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?)", (row['ref_no'], json.dumps(results), st.session_state.username, str(date.today()), "FBC", user_comment))
                     c.execute("UPDATE billing SET status='Completed' WHERE ref_no=?", (row['ref_no'],))
                     conn.commit(); st.session_state.viewing_report_ref = row['ref_no']; st.session_state.editing_ref = None; st.rerun()
 
-        # 2. View/Download Panel (Back Tab for individual report view)
         elif st.session_state.viewing_report_ref:
-            st.info(f"Viewing Authorized Report: {st.session_state.viewing_report_ref}")
-            res_row = pd.read_sql_query(f"SELECT b.*, r.data, r.authorized_by FROM billing b JOIN results r ON b.ref_no = r.bill_ref WHERE b.ref_no='{st.session_state.viewing_report_ref}'", conn).iloc[0]
-            st.download_button("📥 DOWNLOAD PDF REPORT", create_pdf(res_row, json.loads(res_row['data']), res_row['authorized_by'], True), f"Rep_{res_row['ref_no']}.pdf", use_container_width=True)
+            res_row = pd.read_sql_query(f"SELECT b.*, r.data, r.authorized_by, r.comment FROM billing b JOIN results r ON b.ref_no = r.bill_ref WHERE b.ref_no='{st.session_state.viewing_report_ref}'", conn).iloc[0]
+            st.download_button("📥 DOWNLOAD REPORT", create_pdf(res_row, json.loads(res_row['data']), res_row['authorized_by'], True, res_row['comment']), f"Rep_{res_row['ref_no']}.pdf", use_container_width=True)
             if st.button("⬅️ Back to Main Workspace"): st.session_state.viewing_report_ref = None; st.rerun()
 
-        # 3. Main Dashboard Tabs
         else:
             tab_p, tab_c = st.tabs(["📋 Pending Reports", "✅ Completed Reports"])
             with tab_p:
                 p_data = pd.read_sql_query("SELECT * FROM billing WHERE status='Active' AND ref_no NOT IN (SELECT bill_ref FROM results) ORDER BY id DESC", conn)
-                if p_data.empty: st.info("No pending reports.")
                 for _, r in p_data.iterrows():
                     with st.container(border=True):
                         c1, c2 = st.columns([4, 1])
-                        c1.write(f"**{r['ref_no']} - {r['name']}** ({r['date']})")
+                        c1.write(f"**{r['ref_no']} - {r['name']}**")
                         if c2.button("Enter Results", key=f"e_{r['ref_no']}"): st.session_state.editing_ref = r['ref_no']; st.rerun()
             with tab_c:
                 c_data = pd.read_sql_query("SELECT b.*, r.authorized_by FROM billing b JOIN results r ON b.ref_no = r.bill_ref ORDER BY b.id DESC", conn)
-                if c_data.empty: st.info("No completed reports.")
                 for _, r in c_data.iterrows():
                     with st.container(border=True):
                         cl1, cl2 = st.columns([4, 1])
-                        cl1.write(f"**{r['ref_no']} - {r['name']}** | Auth: {r['authorized_by']}")
+                        cl1.write(f"**{r['ref_no']} - {r['name']}**")
                         if cl2.button("View Report", key=f"v_{r['ref_no']}"): st.session_state.viewing_report_ref = r['ref_no']; st.rerun()
 
     # --- SATELLITE ---
     elif st.session_state.user_role == "Satellite":
         st.subheader("📡 Final Authorized Reports")
-        reps = pd.read_sql_query("SELECT b.*, r.data, r.authorized_by FROM billing b JOIN results r ON b.ref_no = r.bill_ref ORDER BY b.id DESC", conn)
+        reps = pd.read_sql_query("SELECT b.*, r.data, r.authorized_by, r.comment FROM billing b JOIN results r ON b.ref_no = r.bill_ref ORDER BY b.id DESC", conn)
         for _, r in reps.iterrows():
             with st.container(border=True):
                 st.write(f"**{r['name']}** ({r['ref_no']})"); 
-                st.download_button("Download", create_pdf(r, json.loads(r['data']), r['authorized_by'], True), f"Rep_{r['ref_no']}.pdf", key=f"s_{r['ref_no']}")
+                st.download_button("Download", create_pdf(r, json.loads(r['data']), r['authorized_by'], True, r['comment']), f"Rep_{r['ref_no']}.pdf", key=f"s_{r['ref_no']}")
 
     if st.sidebar.button("Logout"): st.session_state.logged_in = False; st.rerun()
 conn.close()
