@@ -26,13 +26,13 @@ def init_db():
 conn = init_db()
 c = conn.cursor()
 
-# --- CONSTANTS & LAB SETTINGS ---
+# --- LAB SETTINGS ---
 LAB_NAME = "Life care laboratory Pvt (Ltd)"
 LAB_ADDRESS = "In front of hospital, Kotuwegada, Katuwana"
 LAB_TEL = "0773326715"
 LOGO_PATH = "logo.png"
 
-# --- DATA STRUCTURES ---
+# --- FBC & UFR DATA STRUCTURES ---
 def get_fbc_structure(age_y, gender):
     return [
         {"label": "Total White Cell Count (WBC)", "unit": "cells/cu/mm", "range": "4000 - 11000"},
@@ -53,69 +53,71 @@ def get_fbc_structure(age_y, gender):
     ]
 
 UFR_DROPDOWNS = {
-    "Colour": ["PALE YELLOW", "DARK YELLOW", "STRAW YELLOW", "AMBER", "REDDISH YELLOW", "BLOOD STAINED"],
+    "Colour": ["PALE YELLOW", "YELLOW", "DARK YELLOW", "STRAW YELLOW", "AMBER", "REDDISH YELLOW", "BLOOD STAINED"],
     "Appearance": ["CLEAR", "SLIGHTLY TURBID", "TURBID"],
-    "Specific Gravity": ["1.010", "1.015", "1.020", "1.025", "1.030"],
+    "SG": ["1.010", "1.015", "1.020", "1.025", "1.030"],
     "PH": ["5.0", "5.5", "6.0", "6.5", "7.0", "7.5", "8.0"],
     "Chemicals": ["NIL", "TRACE", "+", "++", "+++", "++++"],
-    "Urobilinogen": ["PRESENT IN NORMAL AMOUNT", "INCREASED"],
+    "Uro": ["PRESENT IN NORMAL AMOUNT", "INCREASED"],
     "Cells": ["NIL", "OCCASIONAL", "1 - 2", "2 - 4", "4 - 6", "6 - 8", "8 - 10", "10 - 15", "15 - 20", "FIELD FULL"],
     "Epi": ["NIL", "FEW", "+", "++", "+++"],
     "Misc": ["NIL", "PRESENT", "NOT FOUND"]
 }
 
-# --- PDF GENERATOR (RESTORING ORIGINAL LAYOUT) ---
-def create_pdf(bill_row, results_dict, auth_user, formats_to_print, is_report=True):
-    pdf = FPDF()
+# --- PDF GENERATOR (STRICT ORIGINAL FORMAT) ---
+def create_report_pdf(bill_row, results_dict, auth_user, formats_to_print):
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
     for fmt in formats_to_print:
         pdf.add_page()
-        # Header
-        if os.path.exists(LOGO_PATH): pdf.image(LOGO_PATH, 12, 10, 30)
+        # Header Section
+        if os.path.exists(LOGO_PATH): pdf.image(LOGO_PATH, 10, 10, 33)
         pdf.set_font("Arial", 'B', 16); pdf.set_x(45); pdf.cell(0, 10, LAB_NAME.upper(), ln=True)
-        pdf.set_font("Arial", '', 10); pdf.set_x(45); pdf.cell(0, 5, f"{LAB_ADDRESS} | {LAB_TEL}", ln=True)
-        pdf.ln(10); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(5)
+        pdf.set_font("Arial", '', 10); pdf.set_x(45); pdf.cell(0, 5, LAB_ADDRESS, ln=True)
+        pdf.set_x(45); pdf.cell(0, 5, f"Tel: {LAB_TEL}", ln=True)
+        pdf.ln(8); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(5)
+
+        # Patient Info Section (Formatted like original)
+        pdf.set_font("Arial", 'B', 10); curr_y = pdf.get_y()
+        pdf.cell(100, 7, f"Patient Name : {bill_row['salute']} {bill_row['name']}")
+        pdf.cell(0, 7, f"Ref. No : {bill_row['ref_no']}", ln=True)
+        pdf.set_font("Arial", '', 10)
+        pdf.cell(100, 7, f"Age / Gender : {bill_row['age_y']}Y / {bill_row['gender']}")
+        pdf.cell(0, 7, f"Date : {bill_row['date']}", ln=True)
+        pdf.cell(100, 7, f"Ref. Doctor  : {bill_row['doctor']}")
+        pdf.cell(0, 7, f"Status : COMPLETED", ln=True)
+        pdf.ln(5); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(8)
+
+        # Test Title
+        pdf.set_font("Arial", 'BU', 12); pdf.cell(0, 10, fmt.upper(), ln=True, align='C'); pdf.ln(5)
+
+        # Table Headers
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(80, 8, "DESCRIPTION", 0); pdf.cell(35, 8, "RESULT", 0, 0, 'C')
+        pdf.cell(35, 8, "UNIT", 0, 0, 'C'); pdf.cell(40, 8, "REF. RANGE", 0, 1, 'C')
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(3)
+
+        # Data Rows
+        pdf.set_font("Arial", '', 10)
+        if "FBC" in fmt.upper():
+            fbc_items = get_fbc_structure(bill_row['age_y'], bill_row['gender'])
+            for item in fbc_items:
+                val = results_dict.get(item['label'], "N/A")
+                pdf.cell(80, 7, item['label'])
+                pdf.set_font("Arial", 'B', 10); pdf.cell(35, 7, str(val), 0, 0, 'C')
+                pdf.set_font("Arial", '', 10); pdf.cell(35, 7, item['unit'], 0, 0, 'C')
+                pdf.cell(40, 7, item['range'], 0, 1, 'C')
         
-        # Patient Info Box
-        pdf.set_font("Arial", '', 10); curr_y = pdf.get_y()
-        pdf.text(12, curr_y + 5, f"Patient Name : {bill_row['salute']} {bill_row['name']}")
-        pdf.text(12, curr_y + 12, f"Age / Gender : {bill_row['age_y']}Y / {bill_row['gender']}")
-        pdf.text(12, curr_y + 19, f"Ref. Doctor   : {bill_row['doctor']}")
-        pdf.text(130, curr_y + 5, f"Reference No  : {bill_row['ref_no']}")
-        pdf.text(130, curr_y + 12, f"Date          : {bill_row['date']}")
-        pdf.set_y(curr_y + 25); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(8)
+        elif "UFR" in fmt.upper():
+            for key, val in results_dict.items():
+                pdf.cell(80, 7, key); pdf.cell(0, 7, str(val), ln=True)
 
-        if is_report:
-            pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, fmt.upper(), ln=True, align='C'); pdf.ln(5)
-            
-            # Table Header
-            pdf.set_font("Arial", 'B', 10)
-            pdf.cell(80, 8, "  Test Description", 0); pdf.cell(40, 8, "Result", 0, 0, 'C')
-            pdf.cell(30, 8, "Unit", 0, 0, 'C'); pdf.cell(40, 8, "Ref. Range", 0, 1, 'C')
-            pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2)
-            pdf.set_font("Arial", '', 10)
-
-            if "FBC" in fmt.upper():
-                for f in get_fbc_structure(bill_row['age_y'], bill_row['gender']):
-                    val = results_dict.get(f['label'], "")
-                    pdf.cell(80, 7, f"  {f['label']}"); pdf.cell(40, 7, str(val), 0, 0, 'C')
-                    pdf.cell(30, 7, f['unit'], 0, 0, 'C'); pdf.cell(40, 7, f['range'], 0, 1, 'C')
-            
-            elif "UFR" in fmt.upper():
-                for k, v in results_dict.items():
-                    pdf.cell(80, 7, f"  {k}"); pdf.cell(0, 7, str(v), ln=True)
-
-            # Footer / Signature
-            pdf.set_y(250); pdf.line(10, 250, 200, 250)
-            pdf.set_font("Arial", 'B', 10); pdf.cell(0, 10, f"Authorized by: {auth_user}", 0, 1, 'R')
-        else:
-            # Invoice Layout
-            pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "INVOICE", ln=True, align='C'); pdf.ln(10)
-            pdf.cell(140, 10, "Description", 1); pdf.cell(50, 10, "Amount", 1, 1, 'R')
-            pdf.set_font("Arial", '', 11); pdf.cell(140, 10, bill_row['tests'], 1); pdf.cell(50, 10, f"{bill_row['final_amount']:,.2f}", 1, 1, 'R')
+        # Footer
+        pdf.set_y(260); pdf.line(10, 260, 200, 260)
+        pdf.set_font("Arial", 'I', 9); pdf.cell(0, 10, f"Computer generated report authorized by: {auth_user}", align='R')
 
     return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-# --- MAIN APP ---
+# --- MAIN UI ---
 st.set_page_config(page_title="Life Care LIMS", layout="wide")
 init_db()
 
@@ -124,17 +126,17 @@ if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if not st.session_state.logged_in:
     with st.columns([1,1,1])[1]:
         if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=200)
-        with st.form("login_form"):
-            u = st.text_input("Username"); p = st.text_input("Password", type="password")
+        with st.form("login"):
+            u = st.text_input("User"); p = st.text_input("Pass", type="password")
             r = st.selectbox("Role", ["Admin", "Billing", "Technician"])
             if st.form_submit_button("LOGIN"):
-                st.session_state.update({'logged_in': True, 'user_role': r, 'username': u}); st.rerun()
+                st.session_state.update({'logged_in':True, 'user_role':r, 'username':u}); st.rerun()
 else:
-    # --- BILLING ---
+    # --- BILLING ROLE ---
     if st.session_state.user_role == "Billing":
         t1, t2 = st.tabs(["New Bill", "Saved Bills"])
         with t1:
-            with st.form("bill"):
+            with st.form("billing"):
                 c1, c2 = st.columns(2)
                 sal = c1.selectbox("Salute", ["Mr", "Mrs", "Miss", "Baby", "Rev"]); name = c2.text_input("Name")
                 age = c1.number_input("Age (Y)", 0); gen = c2.selectbox("Gender", ["Male", "Female"])
@@ -143,63 +145,64 @@ else:
                 tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
                 sel = st.multiselect("Tests", tests_db['test_name'].tolist())
                 total = sum(tests_db[tests_db['test_name'].isin(sel)]['price']); disc = st.number_input("Discount")
-                st.info(f"Final Amount: {total - disc}")
-                if st.form_submit_button("SAVE"):
+                st.subheader(f"Total Amount: LKR {total - disc:,.2f}")
+                if st.form_submit_button("SAVE BILL"):
                     ref = f"LC{datetime.now().strftime('%y%m%d%H%M%S')}"
                     c.execute("INSERT INTO billing (ref_no, salute, name, age_y, gender, doctor, tests, total, discount, final_amount, date, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", 
                               (ref, sal, name, age, gen, doc, ",".join(sel), total, disc, total-disc, str(date.today()), "Active"))
-                    conn.commit(); st.success(f"Saved: {ref}")
+                    conn.commit(); st.success(f"Bill Saved: {ref}")
         with t2:
-            bills = pd.read_sql_query("SELECT * FROM billing ORDER BY id DESC LIMIT 15", conn)
-            for _, b in bills.iterrows():
-                with st.container(border=True):
-                    cl1, cl2 = st.columns([4,1]); cl1.write(f"**{b['name']}** | {b['tests']}"); cl2.download_button("Print Bill", create_pdf(b, {}, "", ["Invoice"], False), f"Bill_{b['ref_no']}.pdf")
+            bills = pd.read_sql_query("SELECT * FROM billing ORDER BY id DESC LIMIT 10", conn)
+            st.dataframe(bills)
 
-    # --- TECHNICIAN ---
+    # --- TECHNICIAN ROLE ---
     elif st.session_state.user_role == "Technician":
         if 'editing_ref' not in st.session_state: st.session_state.editing_ref = None
+        
         if st.session_state.editing_ref:
             row = pd.read_sql_query(f"SELECT * FROM billing WHERE ref_no='{st.session_state.editing_ref}'", conn).iloc[0]
-            billed_list = row['tests'].split(",")
-            res_data = {}
+            tests = row['tests'].split(",")
+            results_data = {}
             with st.form("worksheet"):
-                st.subheader(f"Full Worksheet: {row['name']}")
-                for t in billed_list:
-                    st.markdown(f"#### {t}")
+                st.subheader(f"Full Worksheet for {row['name']}")
+                for t in tests:
+                    st.markdown(f"**Test: {t}**")
                     if "FBC" in t.upper():
                         for f in get_fbc_structure(row['age_y'], row['gender']):
-                            res_data[f['label']] = st.text_input(f"{f['label']} ({f['unit']})", key=f"fbc_{f['label']}")
+                            results_data[f['label']] = st.text_input(f"{f['label']} ({f['unit']})", key=f"fbc_{f['label']}")
                     elif "UFR" in t.upper():
                         c1, c2 = st.columns(2)
-                        res_data["Colour"] = c1.selectbox("Colour", UFR_DROPDOWNS["Colour"])
-                        res_data["Appearance"] = c2.selectbox("Appearance", UFR_DROPDOWNS["Appearance"])
-                        res_data["Specific Gravity"] = c1.selectbox("Specific Gravity", UFR_DROPDOWNS["Specific Gravity"])
-                        res_data["PH"] = c2.selectbox("PH", UFR_DROPDOWNS["PH"])
-                        res_data["Urine sugar"] = c1.selectbox("Sugar", UFR_DROPDOWNS["Chemicals"])
-                        res_data["Protein"] = c2.selectbox("Protein", UFR_DROPDOWNS["Chemicals"])
-                        res_data["Pus cells"] = c1.selectbox("Pus cells", UFR_DROPDOWNS["Cells"])
-                        res_data["Red cells"] = c2.selectbox("Red cells", UFR_DROPDOWNS["Cells"])
+                        results_data["COLOUR"] = c1.selectbox("Colour", UFR_DROPDOWNS["Colour"])
+                        results_data["APPEARANCE"] = c2.selectbox("Appearance", UFR_DROPDOWNS["Appearance"])
+                        results_data["SPECIFIC GRAVITY"] = c1.selectbox("SG", UFR_DROPDOWNS["SG"])
+                        results_data["PH"] = c2.selectbox("PH", UFR_DROPDOWNS["PH"])
+                        results_data["URINE SUGAR"] = c1.selectbox("Sugar", UFR_DROPDOWNS["Chemicals"])
+                        results_data["URINE PROTEIN"] = c2.selectbox("Protein", UFR_DROPDOWNS["Chemicals"])
+                        results_data["PUS CELLS"] = c1.selectbox("Pus", UFR_DROPDOWNS["Cells"])
+                        results_data["RED CELLS"] = c2.selectbox("Red cells", UFR_DROPDOWNS["Cells"])
                     else:
-                        res_data[t] = st.text_input("Result", key=f"gen_{t}")
+                        results_data[t] = st.text_input("Result", key=f"g_{t}")
+
                 if st.form_submit_button("AUTHORIZE ALL"):
-                    c.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?)", (row['ref_no'], json.dumps(res_data), st.session_state.username, str(date.today()), json.dumps(billed_list), ""))
-                    c.execute("UPDATE billing SET status='Completed' WHERE ref_no=?", (row['ref_no'],)); conn.commit(); st.session_state.editing_ref = None; st.rerun()
+                    c.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?)", (row['ref_no'], json.dumps(results_data), st.session_state.username, str(date.today()), json.dumps(tests), ""))
+                    c.execute("UPDATE billing SET status='Completed' WHERE ref_no=?", (row['ref_no'],))
+                    conn.commit(); st.session_state.editing_ref = None; st.rerun()
             if st.button("Cancel"): st.session_state.editing_ref = None; st.rerun()
         else:
-            t1, t2 = st.tabs(["Pending Work", "Completed & Bulk Print"])
+            t1, t2 = st.tabs(["Pending Tests", "Reports (Bulk/Single)"])
             with t1:
-                pending = pd.read_sql_query("SELECT * FROM billing WHERE status='Active'", conn)
-                for _, r in pending.iterrows():
-                    if st.button(f"LOAD: {r['name']} - {r['tests']}", use_container_width=True):
+                p = pd.read_sql_query("SELECT * FROM billing WHERE status='Active'", conn)
+                for _, r in p.iterrows():
+                    if st.button(f"Load Worksheet: {r['name']} ({r['tests']})", use_container_width=True):
                         st.session_state.editing_ref = r['ref_no']; st.rerun()
             with t2:
-                done = pd.read_sql_query("SELECT b.*, r.data, r.format_used FROM billing b JOIN results r ON b.ref_no = r.bill_ref WHERE b.status='Completed' ORDER BY b.id DESC", conn)
-                for _, r in done.iterrows():
+                d = pd.read_sql_query("SELECT b.*, r.data, r.format_used FROM billing b JOIN results r ON b.ref_no = r.bill_ref", conn)
+                for _, r in d.iterrows():
                     with st.container(border=True):
                         c1, c2, c3 = st.columns([3, 1, 1])
-                        c1.write(f"**{r['name']}** | {r['tests']}")
-                        c2.download_button("Print Single", create_pdf(r, json.loads(r['data']), st.session_state.username, [r['tests'].split(",")[0]]), f"S_{r['ref_no']}.pdf")
-                        c3.download_button("Bulk Print", create_pdf(r, json.loads(r['data']), st.session_state.username, json.loads(r['format_used'])), f"Bulk_{r['ref_no']}.pdf")
+                        c1.write(f"**{r['name']}** - {r['tests']}")
+                        c2.download_button("Print One", create_report_pdf(r, json.loads(r['data']), st.session_state.username, [r['tests'].split(",")[0]]), f"Single_{r['ref_no']}.pdf")
+                        c3.download_button("Bulk Print", create_report_pdf(r, json.loads(r['data']), st.session_state.username, json.loads(r['format_used'])), f"Bulk_{r['ref_no']}.pdf")
 
     if st.sidebar.button("Logout"): st.session_state.logged_in = False; st.rerun()
 conn.close()
