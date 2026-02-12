@@ -8,7 +8,7 @@ import json
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v57.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v58.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -36,7 +36,7 @@ def show_logo(width=150):
     if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=width)
     else: st.title("LIFE CARE LABORATORY")
 
-# --- REFERENCE RANGES (BABY FBC SPECIALIZED) ---
+# --- REFERENCE RANGES ---
 def get_fbc_structure(age_y, gender):
     components = ["Total White Cell Count (WBC)", "Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Basophils", "Hemoglobin (Hb)", "Red Blood Cell (RBC)", "HCT / PCV", "MCV", "MCH", "MCHC", "RDW", "Platelet Count"]
     units = {"Total White Cell Count (WBC)": "cells/cu/mm", "Neutrophils": "%", "Lymphocytes": "%", "Monocytes": "%", "Eosinophils": "%", "Basophils": "%", "Hemoglobin (Hb)": "g/dL", "Red Blood Cell (RBC)": "10^6/uL", "HCT / PCV": "%", "MCV": "fL", "MCH": "pg", "MCHC": "g/dL", "RDW": "%", "Platelet Count": "10^3/uL"}
@@ -46,7 +46,7 @@ def get_fbc_structure(age_y, gender):
         ranges = {"Total White Cell Count (WBC)": "4000 - 11000", "Neutrophils": "40 - 75", "Lymphocytes": "20 - 45", "Monocytes": "02 - 10", "Eosinophils": "01 - 06", "Basophils": "00 - 01", "Hemoglobin (Hb)": "13.5 - 17.5" if gender == "Male" else "12.0 - 15.5", "Red Blood Cell (RBC)": "4.5 - 5.5" if gender == "Male" else "3.8 - 4.8", "HCT / PCV": "40 - 52" if gender == "Male" else "36 - 47", "MCV": "80 - 100", "MCH": "27 - 32", "MCHC": "32 - 36", "RDW": "11.5 - 14.5", "Platelet Count": "150 - 410"}
     return [{"label": c, "unit": units[c], "range": ranges.get(c, "")} for c in components]
 
-# --- PDF GENERATOR (NO BORDERS) ---
+# --- PDF GENERATOR ---
 def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False):
     pdf = FPDF()
     pdf.add_page()
@@ -84,6 +84,7 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False):
 st.set_page_config(page_title="Life Care LIMS", layout="wide")
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'editing_ref' not in st.session_state: st.session_state.editing_ref = None
+if 'viewing_bill' not in st.session_state: st.session_state.viewing_bill = None
 
 if not st.session_state.logged_in:
     with st.columns([1, 1, 1])[1]:
@@ -95,75 +96,68 @@ if not st.session_state.logged_in:
                 if c.fetchone(): st.session_state.update({'logged_in': True, 'user_role': r, 'username': u}); st.rerun()
                 else: st.error("Access Denied")
 else:
-    # --- ADMIN DASHBOARD (UPDATED WITH DOCTOR & TEST MGMT) ---
+    # --- ADMIN ---
     if st.session_state.user_role == "Admin":
         st.sidebar.subheader("Admin Menu")
         choice = st.sidebar.radio("Navigate", ["Users", "Doctors", "Tests"])
-        
         if choice == "Users":
             with st.expander("➕ Add User"):
                 with st.form("u"):
                     un = st.text_input("Name"); pw = st.text_input("Pass"); rl = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
                     if st.form_submit_button("Save"): c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (un, pw, rl)); conn.commit(); st.rerun()
-            st.write("---")
             u_df = pd.read_sql_query("SELECT username, role FROM users", conn)
             for i, r in u_df.iterrows():
                 col1, col2, col3 = st.columns([2, 2, 1])
                 col1.write(f"**{r['username']}**"); col2.write(r['role'])
                 if r['username'] != 'admin' and col3.button("Delete", key=f"d_{r['username']}"):
                     c.execute("DELETE FROM users WHERE username=?", (r['username'],)); conn.commit(); st.rerun()
-
         elif choice == "Doctors":
-            st.subheader("👨‍⚕️ Doctor Management")
-            with st.form("doc_form"):
-                dn = st.text_input("New Doctor Name")
-                if st.form_submit_button("Add Doctor"):
-                    c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.success("Doctor Added"); st.rerun()
-            st.write("---")
-            d_df = pd.read_sql_query("SELECT * FROM doctors", conn)
-            for i, r in d_df.iterrows():
-                col1, col2 = st.columns([4, 1])
-                col1.write(r['doc_name'])
-                if col2.button("Delete", key=f"dd_{r['id']}"):
-                    c.execute("DELETE FROM doctors WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
-
+            dn = st.text_input("Doctor Name")
+            if st.button("Add"): c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.rerun()
+            st.table(pd.read_sql_query("SELECT * FROM doctors", conn))
         elif choice == "Tests":
-            st.subheader("🧪 Test Management")
-            with st.form("test_form"):
-                tn = st.text_input("Test Name"); tp = st.number_input("Price (LKR)", min_value=0.0)
-                if st.form_submit_button("Save Test"):
-                    c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.success("Test Saved"); st.rerun()
-            st.write("---")
-            t_df = pd.read_sql_query("SELECT * FROM tests", conn)
-            st.table(t_df)
+            tn = st.text_input("Test"); tp = st.number_input("Price")
+            if st.button("Save"): c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.rerun()
+            st.table(pd.read_sql_query("SELECT * FROM tests", conn))
 
-    # --- BILLING ---
+    # --- BILLING (WITH BACK TAB) ---
     elif st.session_state.user_role == "Billing":
-        show_logo(width=100); st.subheader("📝 Billing Dashboard")
-        with st.container(border=True):
-            c1, c2 = st.columns(2)
-            sal = c1.selectbox("Salute", ["Mr", "Mrs", "Miss", "Baby", "Rev"]); pname = c2.text_input("Name")
-            ay = c1.number_input("Age (Y)", 0); am = c2.number_input("Age (M)", 0)
-            gen = c1.selectbox("Gender", ["Male", "Female"]); mob = c2.text_input("Mobile")
-            docs = [d[0] for d in c.execute("SELECT doc_name FROM doctors").fetchall()]
-            pdoc = st.selectbox("Doctor", ["Self"] + docs)
-            t_db = pd.read_sql_query("SELECT * FROM tests", conn)
-            sel = st.multiselect("Tests", [f"{r['test_name']} - {r['price']}" for _, r in t_db.iterrows()])
-            gross = sum([float(s.split(" - ")[-1]) for s in sel]); disc = st.number_input("Discount (LKR)", 0.0); final = gross - disc
-            st.info(f"Gross: {gross:,.2f} | Discount: {disc:,.2f} | **Net Payable: {final:,.2f}**")
-            if st.button("SAVE & PRINT BILL", use_container_width=True):
-                if pname and sel:
-                    ref = f"LC{datetime.now().strftime('%y%m%d%H%M%S')}"; tn = ", ".join([s.split(" - ")[0] for s in sel])
-                    c.execute("INSERT INTO billing (ref_no, salute, name, age_y, age_m, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (ref, sal, pname, ay, am, gen, mob, pdoc, tn, gross, disc, final, str(date.today()), st.session_state.username, "Active"))
-                    conn.commit(); st.session_state.last_b = ref; st.success(f"Saved: {ref}")
-        if 'last_b' in st.session_state:
-            row = pd.read_sql_query(f"SELECT * FROM billing WHERE ref_no='{st.session_state.last_b}'", conn).iloc[0]
+        show_logo(width=100)
+        if st.session_state.viewing_bill:
+            # --- POST-BILL VIEW WITH BACK TAB ---
+            st.success(f"Bill Saved Successfully! Reference: {st.session_state.viewing_bill}")
+            row = pd.read_sql_query(f"SELECT * FROM billing WHERE ref_no='{st.session_state.viewing_bill}'", conn).iloc[0]
             st.download_button("📥 DOWNLOAD INVOICE", create_pdf(row), f"Bill_{row['ref_no']}.pdf", use_container_width=True)
+            if st.button("⬅️ Back to Billing Page"):
+                st.session_state.viewing_bill = None
+                st.rerun()
+        else:
+            # --- BILLING FORM ---
+            st.subheader("📝 Billing Dashboard")
+            with st.container(border=True):
+                c1, c2 = st.columns(2)
+                sal = c1.selectbox("Salute", ["Mr", "Mrs", "Miss", "Baby", "Rev"]); pname = c2.text_input("Name")
+                ay = c1.number_input("Age (Y)", 0); am = c2.number_input("Age (M)", 0)
+                gen = c1.selectbox("Gender", ["Male", "Female"]); mob = c2.text_input("Mobile")
+                docs = [d[0] for d in c.execute("SELECT doc_name FROM doctors").fetchall()]
+                pdoc = st.selectbox("Doctor", ["Self"] + docs)
+                t_db = pd.read_sql_query("SELECT * FROM tests", conn)
+                sel = st.multiselect("Tests", [f"{r['test_name']} - {r['price']}" for _, r in t_db.iterrows()])
+                gross = sum([float(s.split(" - ")[-1]) for s in sel]); disc = st.number_input("Discount (LKR)", 0.0); final = gross - disc
+                st.info(f"Gross: {gross:,.2f} | Discount: {disc:,.2f} | **Net Payable: {final:,.2f}**")
+                if st.button("SAVE & GENERATE", use_container_width=True):
+                    if pname and sel:
+                        ref = f"LC{datetime.now().strftime('%y%m%d%H%M%S')}"; tn = ", ".join([s.split(" - ")[0] for s in sel])
+                        c.execute("INSERT INTO billing (ref_no, salute, name, age_y, age_m, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (ref, sal, pname, ay, am, gen, mob, pdoc, tn, gross, disc, final, str(date.today()), st.session_state.username, "Active"))
+                        conn.commit()
+                        st.session_state.viewing_bill = ref
+                        st.rerun()
 
-    # --- TECHNICIAN DASHBOARD ---
+    # --- TECHNICIAN (WITH BACK TABS) ---
     elif st.session_state.user_role == "Technician":
         st.subheader("🔬 Technician Workspace")
         if st.session_state.editing_ref:
+            # --- RESULTS ENTRY ---
             row = pd.read_sql_query(f"SELECT * FROM billing WHERE ref_no='{st.session_state.editing_ref}'", conn).iloc[0]
             if st.button("⬅️ Back to List"): st.session_state.editing_ref = None; st.rerun()
             st.markdown(f"### Results for: **{row['name']}**")
@@ -177,8 +171,12 @@ else:
                 if st.form_submit_button("AUTHORIZE"):
                     c.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?)", (row['ref_no'], json.dumps(results), st.session_state.username, str(date.today()), "FBC"))
                     c.execute("UPDATE billing SET status='Completed' WHERE ref_no=?", (row['ref_no'],))
-                    conn.commit(); st.session_state.last_rep = row['ref_no']; st.session_state.editing_ref = None; st.rerun()
+                    conn.commit()
+                    st.session_state.last_rep = row['ref_no']
+                    st.session_state.editing_ref = None # Automatically close and show list
+                    st.rerun()
         else:
+            # --- TABS LIST ---
             tab_p, tab_c = st.tabs(["📋 Pending Reports", "✅ Completed Reports"])
             with tab_p:
                 p_data = pd.read_sql_query("SELECT * FROM billing WHERE status='Active' AND ref_no NOT IN (SELECT bill_ref FROM results) ORDER BY id DESC", conn)
@@ -191,15 +189,19 @@ else:
                 c_data = pd.read_sql_query("SELECT b.*, r.authorized_by FROM billing b JOIN results r ON b.ref_no = r.bill_ref ORDER BY b.id DESC", conn)
                 for _, r in c_data.iterrows():
                     with st.container(border=True):
-                        st.write(f"**{r['ref_no']} - {r['name']}** | Auth: {r['authorized_by']}")
-                        if st.button("View", key=f"v_{r['ref_no']}"): st.session_state.last_rep = r['ref_no']; st.rerun()
-        if 'last_rep' in st.session_state:
+                        cl1, cl2 = st.columns([4, 1])
+                        cl1.write(f"**{r['ref_no']} - {r['name']}** | Auth: {r['authorized_by']}")
+                        if cl2.button("View", key=f"v_{r['ref_no']}"): st.session_state.last_rep = r['ref_no']; st.rerun()
+        
+        if 'last_rep' in st.session_state and not st.session_state.editing_ref:
+            st.divider()
             res_row = pd.read_sql_query(f"SELECT b.*, r.data, r.authorized_by FROM billing b JOIN results r ON b.ref_no = r.bill_ref WHERE b.ref_no='{st.session_state.last_rep}'", conn).iloc[0]
             st.download_button("📥 DOWNLOAD REPORT", create_pdf(res_row, json.loads(res_row['data']), res_row['authorized_by'], True), f"Rep_{res_row['ref_no']}.pdf", use_container_width=True)
+            if st.button("Done & Clear"): del st.session_state['last_rep']; st.rerun()
 
     # --- SATELLITE ---
     elif st.session_state.user_role == "Satellite":
-        st.subheader("📡 Authorized Reports")
+        st.subheader("📡 Final Reports")
         reps = pd.read_sql_query("SELECT b.*, r.data, r.authorized_by FROM billing b JOIN results r ON b.ref_no = r.bill_ref ORDER BY b.id DESC", conn)
         for _, r in reps.iterrows():
             with st.container(border=True):
