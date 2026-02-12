@@ -8,7 +8,7 @@ import json
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v60.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v61.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -62,29 +62,54 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
     pdf.text(130, curr_y + 12, f"Billing Date   : {bill_row['date']}")
     if is_report: pdf.text(130, curr_y + 19, f"Reported Date : {date.today()}")
     pdf.set_y(curr_y + 25); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(8)
+    
     if is_report:
         pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "FULL BLOOD COUNT", ln=True, align='C'); pdf.ln(5)
-        pdf.set_font("Arial", 'B', 10); pdf.cell(70, 9, "  Component", 0, 0, 'L'); pdf.cell(30, 9, "Result", 0, 0, 'C'); pdf.cell(30, 9, "Unit", 0, 0, 'C'); pdf.cell(60, 9, "Reference Range", 0, 1, 'C')
+        pdf.set_font("Arial", 'B', 9); 
+        # Table Headers (Added Absolute Count)
+        pdf.cell(60, 9, "  Component", 0, 0, 'L')
+        pdf.cell(25, 9, "Result", 0, 0, 'C')
+        pdf.cell(35, 9, "Absolute Count", 0, 0, 'C')
+        pdf.cell(20, 9, "Unit", 0, 0, 'C')
+        pdf.cell(50, 9, "Reference Range", 0, 1, 'C')
         pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2)
+        
         pdf.set_font("Arial", '', 10)
         fbc_data = get_fbc_structure(bill_row['age_y'], bill_row['gender'])
+        
+        # Calculation Logic
+        try:
+            wbc_val = float(results_dict.get("Total White Cell Count (WBC)", 0))
+        except:
+            wbc_val = 0
+
+        abs_targets = ["Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Basophils"]
+
         for item in fbc_data:
             res_val = results_dict.get(item['label'], "")
-            pdf.cell(70, 7, f"  {item['label']}", 0); pdf.cell(30, 7, str(res_val), 0, 0, 'C'); pdf.cell(30, 7, item['unit'], 0, 0, 'C'); pdf.cell(60, 7, item['range'], 0, 1, 'C')
+            abs_count = ""
+            
+            # Perform calculation for specific components
+            if item['label'] in abs_targets:
+                try:
+                    diff_val = float(res_val)
+                    abs_count = f"{(diff_val / 100) * wbc_val:.0f}"
+                except:
+                    abs_count = "-"
+
+            pdf.cell(60, 7, f"  {item['label']}", 0)
+            pdf.cell(25, 7, str(res_val), 0, 0, 'C')
+            pdf.cell(35, 7, str(abs_count), 0, 0, 'C')
+            pdf.cell(20, 7, item['unit'], 0, 0, 'C')
+            pdf.cell(50, 7, item['range'], 0, 1, 'C')
         
-        # --- COMMENT BOX SECTION ---
-        pdf.ln(10)
-        pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "Comments / Remarks:", ln=True)
-        pdf.set_font("Arial", '', 10)
-        # Multi-line box for comment
-        pdf.rect(10, pdf.get_y(), 190, 20)
-        pdf.set_y(pdf.get_y() + 2)
-        pdf.set_x(12)
-        pdf.multi_cell(186, 5, comment if comment else "N/A")
-        
+        # Comment Box Section
+        pdf.ln(10); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "Comments / Remarks:", ln=True)
+        pdf.set_font("Arial", '', 10); pdf.rect(10, pdf.get_y(), 190, 20)
+        pdf.set_y(pdf.get_y() + 2); pdf.set_x(12); pdf.multi_cell(186, 5, comment if comment else "N/A")
         pdf.ln(15); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 10, f"Authorized by: {auth_user}", 0, 1, 'R')
     else:
-        # Invoice Section...
+        # Invoice...
         pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "INVOICE", ln=True, align='C'); pdf.ln(5)
         pdf.set_font("Arial", 'B', 10); pdf.cell(140, 8, "Description", 0); pdf.cell(50, 8, "Amount (LKR)", 0, 1, 'R')
         pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2)
@@ -163,7 +188,6 @@ else:
     # --- TECHNICIAN WORKSPACE ---
     elif st.session_state.user_role == "Technician":
         st.subheader("🔬 Technician Workspace")
-        
         if st.session_state.editing_ref:
             row = pd.read_sql_query(f"SELECT * FROM billing WHERE ref_no='{st.session_state.editing_ref}'", conn).iloc[0]
             if st.button("⬅️ Back to List"): st.session_state.editing_ref = None; st.rerun()
@@ -175,11 +199,8 @@ else:
                     cl1, cl2, cl3 = st.columns([3, 1, 2])
                     results[item['label']] = cl1.text_input(item['label'], key=f"i_{row['ref_no']}_{item['label']}")
                     cl2.write(f"\n{item['unit']}"); cl3.caption(f"Ref: {item['range']}")
-                
-                # --- ADD COMMENT AREA IN FORM ---
                 st.write("---")
-                user_comment = st.text_area("Report Comments / Remarks", help="Add a short note about the report here.")
-                
+                user_comment = st.text_area("Report Comments / Remarks")
                 if st.form_submit_button("AUTHORIZE REPORT"):
                     c.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?)", (row['ref_no'], json.dumps(results), st.session_state.username, str(date.today()), "FBC", user_comment))
                     c.execute("UPDATE billing SET status='Completed' WHERE ref_no=?", (row['ref_no'],))
