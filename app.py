@@ -8,7 +8,7 @@ import json
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v63.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v64.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -61,7 +61,7 @@ UFR_DROPDOWNS = {
 }
 
 # --- PDF GENERATOR ---
-def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, comment="", format_type="FBC"):
+def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, comment="", format_used="FBC"):
     pdf = FPDF()
     pdf.add_page()
     if os.path.exists(LOGO_PATH): pdf.image(LOGO_PATH, 12, 10, 30)
@@ -78,7 +78,7 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
     pdf.set_y(curr_y + 25); pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(8)
     
     if is_report:
-        if format_type == "FBC":
+        if format_used == "FBC":
             pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "FULL BLOOD COUNT", ln=True, align='C'); pdf.ln(5)
             pdf.set_font("Arial", 'B', 9); pdf.cell(60, 9, "  Component", 0, 0, 'L'); pdf.cell(25, 9, "Result", 0, 0, 'C'); pdf.cell(35, 9, "Absolute Count", 0, 0, 'C'); pdf.cell(20, 9, "Unit", 0, 0, 'C'); pdf.cell(50, 9, "Reference Range", 0, 1, 'C')
             pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2)
@@ -97,29 +97,25 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
                     except: abs_count = "-"
                 pdf.cell(60, 7, f"  {item['label']}", 0); pdf.cell(25, 7, str(res_val), 0, 0, 'C'); pdf.cell(35, 7, str(abs_count), 0, 0, 'C'); pdf.cell(20, 7, item['unit'], 0, 0, 'C'); pdf.cell(50, 7, item['range'], 0, 1, 'C')
         
-        elif format_type == "UFR":
+        elif format_used == "UFR":
             pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "URINE FULL REPORT", ln=True, align='C'); pdf.ln(5)
-            pdf.set_font("Arial", 'B', 10); pdf.cell(80, 9, "  Description", 0, 0, 'L'); pdf.cell(70, 9, "Result", 0, 0, 'C'); pdf.cell(40, 9, "Unit", 0, 1, 'C')
+            pdf.set_font("Arial", 'B', 10); pdf.cell(80, 9, "  Description", 0, 0, 'L'); pdf.cell(70, 9, "Result", 0, 0, 'L'); pdf.cell(40, 9, "Unit", 0, 1, 'C')
             pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2)
-            
-            # Sections
             sections = [
                 ("Macroscopic Examinations", ["Colour", "Appearance", "Specific Gravity", "PH"]),
                 ("Chemical Findings", ["Urine sugar", "Ketone bodies", "Bilirubin", "Urobilinogen"]),
                 ("Microscopic Examination", ["Pus cells", "Red cells", "Epithelial cells", "Casts", "Crystals"])
             ]
-            
             for sec_name, comps in sections:
                 pdf.ln(2); pdf.set_font("Arial", 'BU', 10); pdf.cell(0, 7, sec_name, ln=True); pdf.set_font("Arial", '', 10)
                 for c in comps:
-                    pdf.cell(80, 7, f"  {c}", 0); pdf.cell(70, 7, str(results_dict.get(c, "")), 0, 0, 'C'); 
+                    pdf.cell(80, 7, f"  {c}", 0); 
+                    pdf.cell(70, 7, str(results_dict.get(c, "")), 0, 0, 'L'); 
                     u_val = "/H.P.F" if c in ["Pus cells", "Red cells"] else ""
                     pdf.cell(40, 7, u_val, 0, 1, 'C')
 
-        # Comment Box
         pdf.ln(10); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "Comments / Remarks:", ln=True)
-        pdf.set_font("Arial", '', 10); pdf.rect(10, pdf.get_y(), 190, 20)
-        pdf.set_y(pdf.get_y() + 2); pdf.set_x(12); pdf.multi_cell(186, 5, comment if comment else "N/A")
+        pdf.set_font("Arial", '', 10); pdf.rect(10, pdf.get_y(), 190, 20); pdf.set_y(pdf.get_y() + 2); pdf.set_x(12); pdf.multi_cell(186, 5, comment if comment else "N/A")
         pdf.ln(15); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 10, f"Authorized by: {auth_user}", 0, 1, 'R')
     else:
         pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "INVOICE", ln=True, align='C'); pdf.ln(5)
@@ -146,7 +142,6 @@ if not st.session_state.logged_in:
                 if c.fetchone(): st.session_state.update({'logged_in': True, 'user_role': r, 'username': u}); st.rerun()
                 else: st.error("Access Denied")
 else:
-    # --- ADMIN / BILLING sections remain same as before ---
     if st.session_state.user_role == "Admin":
         st.sidebar.subheader("Admin Menu")
         choice = st.sidebar.radio("Navigate", ["Users", "Doctors", "Tests"])
@@ -195,23 +190,28 @@ else:
                         c.execute("INSERT INTO billing (ref_no, salute, name, age_y, age_m, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (ref, sal, pname, ay, am, gen, mob, pdoc, tn, gross, disc, final, str(date.today()), st.session_state.username, "Active"))
                         conn.commit(); st.session_state.viewing_bill = ref; st.rerun()
 
-    # --- TECHNICIAN WORKSPACE (FBC & UFR) ---
     elif st.session_state.user_role == "Technician":
         st.subheader("🔬 Technician Workspace")
         if st.session_state.editing_ref:
             row = pd.read_sql_query(f"SELECT * FROM billing WHERE ref_no='{st.session_state.editing_ref}'", conn).iloc[0]
             if st.button("⬅️ Back"): st.session_state.editing_ref = None; st.rerun()
             
-            f_type = st.radio("Select Report Format", ["FBC", "UFR"], horizontal=True)
+            # Logic to only show billed tests
+            billed_tests = row['tests'].upper()
+            st.markdown(f"#### Billed Test: **{row['tests']}**")
+            
             results = {}
             with st.form("res_f"):
-                if f_type == "FBC":
+                if "FBC" in billed_tests:
+                    st.info("Entering Results for FBC")
                     f_struct = get_fbc_structure(row['age_y'], row['gender'])
                     for item in f_struct:
                         cl1, cl2, cl3 = st.columns([3, 1, 2])
                         results[item['label']] = cl1.text_input(item['label'])
                         cl2.write(f"\n{item['unit']}"); cl3.caption(f"Ref: {item['range']}")
-                else:
+                    f_type = "FBC"
+                elif "UFR" in billed_tests:
+                    st.info("Entering Results for UFR")
                     st.markdown("#### Macroscopic Examinations")
                     for c_name in ["Colour", "Appearance", "Specific Gravity", "PH"]:
                         results[c_name] = st.selectbox(c_name, UFR_DROPDOWNS[c_name])
@@ -223,6 +223,10 @@ else:
                         results[c_name] = st.selectbox(c_name, UFR_DROPDOWNS[c_name])
                     results["Casts"] = st.text_input("Casts")
                     results["Crystals"] = st.text_input("Crystals")
+                    f_type = "UFR"
+                else:
+                    st.warning("Selected test format not defined. Defaulting to general entry.")
+                    f_type = "General"
                 
                 st.write("---")
                 user_comment = st.text_area("Report Comments")
@@ -243,7 +247,7 @@ else:
                 for _, r in p_data.iterrows():
                     with st.container(border=True):
                         c1, c2 = st.columns([4, 1])
-                        c1.write(f"**{r['ref_no']} - {r['name']}**")
+                        c1.write(f"**{r['ref_no']} - {r['name']} ({r['tests']})**")
                         if c2.button("Enter Results", key=f"e_{r['ref_no']}"): st.session_state.editing_ref = r['ref_no']; st.rerun()
             with tab_c:
                 c_data = pd.read_sql_query("SELECT b.*, r.authorized_by FROM billing b JOIN results r ON b.ref_no = r.bill_ref ORDER BY b.id DESC", conn)
