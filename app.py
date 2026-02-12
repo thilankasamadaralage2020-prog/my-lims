@@ -129,6 +129,8 @@ def create_pdf(bill_row, results_dict, auth_user, formats_to_print, comment=""):
 
 # --- MAIN UI ---
 st.set_page_config(page_title="Life Care LIMS", layout="wide")
+init_db()
+
 if not st.session_state.get('logged_in'):
     with st.columns([1,1,1])[1]:
         if os.path.exists(LOGO_PATH): st.image(LOGO_PATH, width=250)
@@ -140,8 +142,49 @@ if not st.session_state.get('logged_in'):
                 if res: st.session_state.update({'logged_in':True, 'username':u, 'user_role':r}); st.rerun()
                 else: st.error("Invalid Login")
 else:
-    if st.session_state.user_role == "Technician":
-        st.sidebar.title(f"User: {st.session_state.username}")
+    # --- ADMIN ROLE ---
+    if st.session_state.user_role == "Admin":
+        st.sidebar.title("Admin Menu")
+        if st.sidebar.button("Logout"): st.session_state.logged_in = False; st.rerun()
+        choice = st.radio("Admin Functions", ["Manage Users", "Manage Doctors", "Manage Tests"])
+        if choice == "Manage Tests":
+            t_name = st.text_input("Test Name")
+            t_price = st.number_input("Price")
+            if st.button("Save Test"):
+                c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (t_name, t_price))
+                conn.commit(); st.rerun()
+            st.table(pd.read_sql_query("SELECT * FROM tests", conn))
+
+    # --- BILLING ROLE ---
+    elif st.session_state.user_role == "Billing":
+        st.sidebar.title("Billing Dashboard")
+        if st.sidebar.button("Logout"): st.session_state.logged_in = False; st.rerun()
+        
+        t1, t2 = st.tabs(["Create New Bill", "View Recent Bills"])
+        with t1:
+            with st.form("new_bill"):
+                c1, c2 = st.columns(2)
+                sal = c1.selectbox("Salute", ["Mr", "Mrs", "Miss", "Baby", "Rev"])
+                name = c2.text_input("Patient Name")
+                age = c1.number_input("Age (Y)", 0)
+                gen = c2.selectbox("Gender", ["Male", "Female"])
+                docs = [d[0] for d in c.execute("SELECT doc_name FROM doctors").fetchall()]
+                doc_sel = st.selectbox("Doctor", ["Self"]+docs)
+                tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
+                sel = st.multiselect("Select Tests", tests_db['test_name'].tolist())
+                total = sum(tests_db[tests_db['test_name'].isin(sel)]['price'])
+                disc = st.number_input("Discount")
+                st.write(f"### Total: LKR {total - disc}")
+                if st.form_submit_button("SAVE BILL"):
+                    ref = f"LC{datetime.now().strftime('%y%m%d%H%M%S')}"
+                    c.execute("INSERT INTO billing (ref_no, salute, name, age_y, gender, doctor, tests, total, discount, final_amount, date, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (ref, sal, name, age, gen, doc_sel, ",".join(sel), total, disc, total-disc, str(date.today()), "Active"))
+                    conn.commit(); st.success(f"Bill Saved: {ref}")
+        with t2:
+            st.table(pd.read_sql_query("SELECT ref_no, name, tests, final_amount, status FROM billing ORDER BY id DESC LIMIT 10", conn))
+
+    # --- TECHNICIAN ROLE ---
+    elif st.session_state.user_role == "Technician":
+        st.sidebar.title("Technician Menu")
         if st.sidebar.button("Logout"): st.session_state.logged_in = False; st.rerun()
         
         pending = pd.read_sql_query("SELECT * FROM billing WHERE status='Active'", conn)
@@ -159,8 +202,8 @@ else:
                     elif "UFR" in t.upper():
                         test_data["COLOUR"] = st.selectbox("COLOUR", UFR_DROPDOWNS["COLOUR"], key=f"{r['ref_no']}u1")
                         test_data["APPEARANCE"] = st.selectbox("APPEARANCE", UFR_DROPDOWNS["APPEARANCE"], key=f"{r['ref_no']}u2")
-                        test_data["PH"] = st.selectbox("PH", UFR_DROPDOWNS["PH"], key=f"{r['ref_no']}u3")
                         test_data["SPECIFIC GRAVITY"] = st.selectbox("SG", UFR_DROPDOWNS["SG"], key=f"{r['ref_no']}u4")
+                        test_data["PH"] = st.selectbox("PH", UFR_DROPDOWNS["PH"], key=f"{r['ref_no']}u3")
                         test_data["URINE SUGAR"] = st.selectbox("SUGAR", UFR_DROPDOWNS["CHEMICAL"], key=f"{r['ref_no']}u5")
                         test_data["URINE PROTEIN"] = st.selectbox("PROTEIN", UFR_DROPDOWNS["CHEMICAL"], key=f"{r['ref_no']}u6")
                         test_data["PUS CELLS"] = st.selectbox("PUS CELLS", UFR_DROPDOWNS["CELLS"], key=f"{r['ref_no']}u7")
@@ -169,9 +212,9 @@ else:
                         test_data["CRYSTALS"] = st.selectbox("CRYSTALS", UFR_DROPDOWNS["CRYSTALS"], key=f"{r['ref_no']}u10")
                         final_results["UFR"] = test_data
                     elif "CREATININE" in t.upper():
-                        test_data["Serum Creatinine"] = st.text_input("Serum Creatinine (mg/dL)", key=f"{r['ref_no']}cr")
+                        test_data["Serum Creatinine"] = st.text_input("Serum Creatinine", key=f"{r['ref_no']}cr")
                         final_results["CREATININE"] = test_data
-
+                    
                     if st.button(f"Authorize {t}", key=f"ath_{t}_{r['ref_no']}"):
                         cur = c.execute("SELECT data FROM results WHERE bill_ref=?", (r['ref_no'],)).fetchone()
                         existing = json.loads(cur[0]) if cur else {}
@@ -179,8 +222,8 @@ else:
                         c.execute("INSERT OR REPLACE INTO results (bill_ref, data, authorized_by, auth_date, format_used) VALUES (?,?,?,?,?)",
                                   (r['ref_no'], json.dumps(existing), st.session_state.username, str(date.today()), json.dumps(list(existing.keys()))))
                         conn.commit(); st.success(f"{t} Authorized")
-                
-                if st.button("Finalize All", key=f"fin_{r['ref_no']}"):
+
+                if st.button("Finalize Bill", key=f"fin_{r['ref_no']}"):
                     c.execute("UPDATE billing SET status='Completed' WHERE ref_no=?", (r['ref_no'],)); conn.commit(); st.rerun()
 
         st.divider()
@@ -194,9 +237,4 @@ else:
                     c2.download_button(f"Print {t_name}", create_pdf(dr, res_dict, st.session_state.username, [t_name]), f"{t_name}_{dr['ref_no']}.pdf")
                 c3.download_button("BULK PRINT (A4)", create_pdf(dr, res_dict, st.session_state.username, list(res_dict.keys())), f"Full_{dr['ref_no']}.pdf", type="primary")
 
-    elif st.session_state.user_role == "Billing":
-        # (Billing logic same as previous version)
-        st.write("Billing Dashboard Active")
-    elif st.session_state.user_role == "Admin":
-        # (Admin logic same as previous version)
-        st.write("Admin Dashboard Active")
+conn.close()
