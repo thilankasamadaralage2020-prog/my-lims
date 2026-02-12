@@ -29,9 +29,7 @@ c = conn.cursor()
 
 # --- eGFR CALCULATION (CKD-EPI 2021) ---
 def calculate_egfr(scr, age, gender):
-    """
-    Calculates eGFR using the CKD-EPI Creatinine Equation (2021) - No Race adjustment.
-    """
+    # CKD-EPI 2021 Formula for more accuracy
     kappa = 0.9 if gender == "Male" else 0.7
     alpha = -0.411 if gender == "Male" else -0.329
     multiplier = 1.0 if gender == "Male" else 1.012
@@ -113,18 +111,13 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
                         "5) CKD5 kidney failure - GFR less than 15 ml/min/1.73m^2 (CKD5D for dialysis patients)"
                     )
                     pdf.rect(10, pdf.get_y(), 190, 32); pdf.set_xy(12, pdf.get_y() + 2); pdf.multi_cell(186, 4.5, ckd_txt); pdf.set_y(pdf.get_y() + 5)
-
-            elif format_used == "FBC":
-                # FBC PDF LOGIC ...
-                pass
-            
+            # Other report types ...
             pdf.ln(5); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "Comments / Remarks:", ln=True)
             pdf.set_font("Arial", '', 10); pdf.rect(10, pdf.get_y(), 190, 20); pdf.set_y(pdf.get_y() + 2); pdf.set_x(12); pdf.multi_cell(186, 5, comment if comment else "N/A")
             pdf.ln(15); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 10, f"Authorized by: {auth_user}", 0, 1, 'R')
         else:
             pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, "INVOICE", ln=True, align='C'); pdf.ln(5)
-            # INVOICE LOGIC ...
-        
+            # Invoice Logic
         return pdf.output(dest='S').encode('latin-1', 'ignore')
     except Exception as e:
         return f"PDF Error: {str(e)}".encode('latin-1')
@@ -143,15 +136,15 @@ if not st.session_state.logged_in:
                 if c.fetchone(): st.session_state.update({'logged_in': True, 'user_role': r, 'username': u}); st.rerun()
                 else: st.error("Access Denied")
 else:
-    # --- ADMIN ROLE (USER DELETE OPTION) ---
+    # --- ADMIN ROLE ---
     if st.session_state.user_role == "Admin":
         st.sidebar.subheader("Admin Menu")
         choice = st.sidebar.radio("Navigate", ["Users", "Doctors", "Tests"])
+        
         if choice == "Users":
             with st.form("u"):
                 un = st.text_input("Name"); pw = st.text_input("Pass"); rl = st.selectbox("Role", ["Admin", "Billing", "Technician", "Satellite"])
-                if st.form_submit_button("Save"): c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (un, pw, rl)); conn.commit(); st.rerun()
-            
+                if st.form_submit_button("Save User"): c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (un, pw, rl)); conn.commit(); st.rerun()
             st.write("### Current Users")
             u_df = pd.read_sql_query("SELECT username, role FROM users", conn)
             for i, r in u_df.iterrows():
@@ -162,7 +155,57 @@ else:
                         c.execute("DELETE FROM users WHERE username=?", (r['username'],)); conn.commit(); st.rerun()
                 else: col3.write("🛡️ Protected")
 
-    # --- TECHNICIAN ROLE (YAPATHKALA KALA CALCULATION) ---
+        elif choice == "Doctors":
+            st.subheader("Doctor Management")
+            with st.form("doc_add"):
+                dn = st.text_input("New Doctor Name")
+                if st.form_submit_button("Add Doctor"):
+                    if dn: c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (dn,)); conn.commit(); st.rerun()
+            
+            st.write("### Registered Doctors")
+            d_df = pd.read_sql_query("SELECT * FROM doctors", conn)
+            for i, r in d_df.iterrows():
+                col1, col2 = st.columns([4, 1])
+                col1.write(r['doc_name'])
+                if col2.button("🗑️", key=f"d_{r['id']}"):
+                    c.execute("DELETE FROM doctors WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
+
+        elif choice == "Tests":
+            st.subheader("Test Management")
+            with st.form("test_add"):
+                tn = st.text_input("Test Name"); tp = st.number_input("Price (LKR)", min_value=0.0)
+                if st.form_submit_button("Save Test"):
+                    if tn: c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.rerun()
+            
+            st.write("### Test Catalog")
+            t_df = pd.read_sql_query("SELECT * FROM tests", conn)
+            for i, r in t_df.iterrows():
+                col1, col2, col3 = st.columns([3, 2, 1])
+                col1.write(r['test_name']); col2.write(f"LKR {r['price']:,.2f}")
+                if col3.button("🗑️", key=f"t_{r['test_name']}"):
+                    c.execute("DELETE FROM tests WHERE test_name=?", (r['test_name'],)); conn.commit(); st.rerun()
+
+    # --- BILLING ROLE ---
+    elif st.session_state.user_role == "Billing":
+        show_logo(100); st.subheader("📝 Billing Dashboard")
+        with st.container(border=True):
+            c1, c2 = st.columns(2)
+            sal = c1.selectbox("Salute", ["Mr", "Mrs", "Miss", "Baby", "Rev"]); pname = c2.text_input("Name")
+            ay = c1.number_input("Age (Y)", 0); am = c2.number_input("Age (M)", 0)
+            gen = c1.selectbox("Gender", ["Male", "Female"]); mob = c2.text_input("Mobile")
+            docs = [d[0] for d in c.execute("SELECT doc_name FROM doctors").fetchall()]
+            pdoc = st.selectbox("Doctor", ["Self"] + docs)
+            t_db = pd.read_sql_query("SELECT * FROM tests", conn)
+            sel = st.multiselect("Tests", [f"{r['test_name']} - {r['price']}" for _, r in t_db.iterrows()])
+            gross = sum([float(s.split(" - ")[-1]) for s in sel]); disc = st.number_input("Discount (LKR)", 0.0); final = gross - disc
+            st.info(f"Net Payable: {final:,.2f}")
+            if st.button("SAVE BILL", use_container_width=True):
+                if pname and sel:
+                    ref = f"LC{datetime.now().strftime('%y%m%d%H%M%S')}"; tn = ", ".join([s.split(" - ")[0] for s in sel])
+                    c.execute("INSERT INTO billing (ref_no, salute, name, age_y, age_m, gender, mobile, doctor, tests, total, discount, final_amount, date, bill_user, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (ref, sal, pname, ay, am, gen, mob, pdoc, tn, gross, disc, final, str(date.today()), st.session_state.username, "Active"))
+                    conn.commit(); st.success(f"Saved: {ref}")
+
+    # --- TECHNICIAN ROLE ---
     elif st.session_state.user_role == "Technician":
         st.subheader("🔬 Technician Workspace")
         if st.session_state.editing_ref:
@@ -174,16 +217,15 @@ else:
                     cre_v = st.text_input("Serum Creatinine (mg/dL)")
                     results["Serum Creatinine"] = cre_v
                     if row['age_y'] >= 18:
-                        if st.checkbox("Calculate eGFR (CKD-EPI)?"):
+                        if st.checkbox("Calculate eGFR (CKD-EPI 2021)?", value=True):
                             try:
                                 scr = float(cre_v); age = row['age_y']; gender = row['gender']
                                 results["eGFR"] = calculate_egfr(scr, age, gender)
                                 st.success(f"Calculated eGFR: {results['eGFR']}")
-                            except: st.warning("Please enter valid Creatinine value")
+                            except: st.warning("Enter valid Creatinine")
                         else: results["eGFR"] = st.text_input("eGFR (Manual)")
                     f_type = "Serum Creatinine"
-                
-                # ... OTHER TEST TYPES ...
+                # (Add FBC / UFR logic if needed)
                 u_comm = st.text_area("Report Comments")
                 if st.form_submit_button("AUTHORIZE"):
                     c.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?)", (row['ref_no'], json.dumps(results), st.session_state.username, str(date.today()), f_type, u_comm))
@@ -191,10 +233,21 @@ else:
             if st.button("Cancel"): st.session_state.editing_ref = None; st.rerun()
         else:
             t1, t2 = st.tabs(["Pending Tests", "Completed Reports"])
-            # (Completed Reports tabs and pending logic as before)
-            # ...
-
-    # (Other roles: Billing, Satellite stay same)
+            with t1:
+                p_data = pd.read_sql_query("SELECT * FROM billing WHERE status='Active' ORDER BY id DESC", conn)
+                for _, r in p_data.iterrows():
+                    with st.container(border=True):
+                        cl1, cl2 = st.columns([4, 1])
+                        cl1.write(f"**{r['name']}** ({r['ref_no']}) - {r['tests']}")
+                        if cl2.button("Enter Results", key=f"e_{r['ref_no']}"): st.session_state.editing_ref = r['ref_no']; st.rerun()
+            with t2:
+                c_data = pd.read_sql_query("SELECT b.*, r.data, r.authorized_by, r.comment, r.format_used FROM billing b JOIN results r ON b.ref_no = r.bill_ref WHERE b.status='Completed' ORDER BY b.id DESC LIMIT 15", conn)
+                for _, r in c_data.iterrows():
+                    with st.container(border=True):
+                        cl1, cl2 = st.columns([4, 1])
+                        cl1.write(f"**{r['name']}** ({r['ref_no']}) - {r['tests']}")
+                        cl2.download_button("Download", create_pdf(r, json.loads(r['data']), r['authorized_by'], True, r['comment'], r['format_used']), f"Rep_{r['ref_no']}.pdf", key=f"dl_{r['ref_no']}")
 
     if st.sidebar.button("Logout"): st.session_state.logged_in = False; st.rerun()
+
 conn.close()
