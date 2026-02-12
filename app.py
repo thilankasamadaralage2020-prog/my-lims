@@ -8,7 +8,7 @@ import json
 
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect('lifecare_final_v61.db', check_same_thread=False)
+    conn = sqlite3.connect('lifecare_final_v62.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT, role TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS doctors (id INTEGER PRIMARY KEY AUTOINCREMENT, doc_name TEXT)')
@@ -66,7 +66,6 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
     if is_report:
         pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "FULL BLOOD COUNT", ln=True, align='C'); pdf.ln(5)
         pdf.set_font("Arial", 'B', 9); 
-        # Table Headers (Added Absolute Count)
         pdf.cell(60, 9, "  Component", 0, 0, 'L')
         pdf.cell(25, 9, "Result", 0, 0, 'C')
         pdf.cell(35, 9, "Absolute Count", 0, 0, 'C')
@@ -74,28 +73,29 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
         pdf.cell(50, 9, "Reference Range", 0, 1, 'C')
         pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2)
         
-        pdf.set_font("Arial", '', 10)
         fbc_data = get_fbc_structure(bill_row['age_y'], bill_row['gender'])
-        
-        # Calculation Logic
-        try:
-            wbc_val = float(results_dict.get("Total White Cell Count (WBC)", 0))
-        except:
-            wbc_val = 0
-
+        try: wbc_val = float(results_dict.get("Total White Cell Count (WBC)", 0))
+        except: wbc_val = 0
         abs_targets = ["Neutrophils", "Lymphocytes", "Monocytes", "Eosinophils", "Basophils"]
 
         for item in fbc_data:
+            # --- ADD DIFFERENTIAL COUNT HEADING ---
+            if item['label'] == "Neutrophils":
+                pdf.ln(2); pdf.set_font("Arial", 'BU', 10)
+                pdf.cell(0, 7, "Differential Count", ln=True); pdf.set_font("Arial", '', 10)
+            
+            # --- ADD RBC INDICES HEADING ---
+            if item['label'] == "Hemoglobin (Hb)":
+                pdf.ln(4); pdf.set_font("Arial", 'BU', 10)
+                pdf.cell(0, 7, "RBC Indices", ln=True); pdf.set_font("Arial", '', 10)
+
             res_val = results_dict.get(item['label'], "")
             abs_count = ""
-            
-            # Perform calculation for specific components
             if item['label'] in abs_targets:
                 try:
                     diff_val = float(res_val)
                     abs_count = f"{(diff_val / 100) * wbc_val:.0f}"
-                except:
-                    abs_count = "-"
+                except: abs_count = "-"
 
             pdf.cell(60, 7, f"  {item['label']}", 0)
             pdf.cell(25, 7, str(res_val), 0, 0, 'C')
@@ -103,7 +103,7 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
             pdf.cell(20, 7, item['unit'], 0, 0, 'C')
             pdf.cell(50, 7, item['range'], 0, 1, 'C')
         
-        # Comment Box Section
+        # Comment Box
         pdf.ln(10); pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "Comments / Remarks:", ln=True)
         pdf.set_font("Arial", '', 10); pdf.rect(10, pdf.get_y(), 190, 20)
         pdf.set_y(pdf.get_y() + 2); pdf.set_x(12); pdf.multi_cell(186, 5, comment if comment else "N/A")
