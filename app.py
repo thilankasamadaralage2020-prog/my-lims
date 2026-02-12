@@ -18,7 +18,7 @@ def init_db():
                   gender TEXT, mobile TEXT, doctor TEXT, tests TEXT, total REAL, 
                   discount REAL, final_amount REAL, date TEXT, bill_user TEXT, status TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS results 
-                 (bill_ref TEXT PRIMARY KEY, data TEXT, authorized_by TEXT, auth_date TEXT, comment TEXT)''')
+                 (bill_ref TEXT PRIMARY KEY, data TEXT, authorized_by TEXT, auth_date TEXT, format_used TEXT, comment TEXT)''')
     c.execute("INSERT OR IGNORE INTO users VALUES ('admin', 'admin123', 'Admin')")
     conn.commit()
     return conn
@@ -86,7 +86,7 @@ def create_pdf(bill_row, results_dict, auth_user, formats_to_print, comment_dict
 
         if "FBC" in fmt_name.upper():
             pdf.set_font("Arial", 'B', 9); pdf.cell(65, 8, "Description"); pdf.cell(25, 8, "Result", align='C')
-            pdf.cell(35, 8, "Abs Count", align='C'); pdf.cell(30, 8, "Unit", align='C'); pdf.cell(35, 8, "Ref Range", 1, 1, 'C')
+            pdf.cell(35, 8, "Abs Count", align='C'); pdf.cell(30, 8, "Unit", align='C'); pdf.cell(35, 8, "Ref Range", 0, 1, 'C')
             pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2); pdf.set_font("Arial", '', 10)
             data = results_dict.get("FBC", {})
             wbc = float(data.get("Total White Cell Count (WBC)", 0) or 0)
@@ -114,7 +114,7 @@ def create_pdf(bill_row, results_dict, auth_user, formats_to_print, comment_dict
             pdf.set_font("Arial", '', 8)
             pdf.cell(0, 4, "Stage 1: >90 | Stage 2: 60-89 | Stage 3a: 45-59 | Stage 3b: 30-44 | Stage 4: 15-29 | Stage 5: <15", ln=True)
 
-        cmt = comment_dict.get(fmt_name.upper(), "")
+        cmt = comment_dict.get(fmt_name.upper(), "") if isinstance(comment_dict, dict) else ""
         if cmt: pdf.ln(5); pdf.set_font("Arial", 'B', 9); pdf.cell(0, 5, "Comments:"); pdf.set_font("Arial", '', 9); pdf.ln(5); pdf.multi_cell(0, 5, cmt, 1)
         
         pdf.set_y(265); pdf.line(10, 265, 200, 265); pdf.set_font("Arial", 'I', 8); pdf.cell(0, 10, f"Authorized by: {auth_user}", align='R')
@@ -147,7 +147,7 @@ else:
                             t_data[comp['label']] = st.text_input(f"{comp['label']}", key=f"{r['ref_no']}{comp['label']}")
                         cmt_map["FBC"] = st.text_area("FBC Comment", key=f"c_fbc_{r['ref_no']}")
                         res_map["FBC"] = t_data
-                    elif "UFR" in t.upper():
+                    elif "UFR" in t.upper() or "URINE FULL REPORT" in t.upper():
                         t_data["COLOUR"] = st.selectbox("COLOUR", UFR_DROPDOWNS["COLOUR"], key=f"u1_{r['ref_no']}")
                         t_data["APPEARANCE"] = st.selectbox("APPEARANCE", UFR_DROPDOWNS["APPEARANCE"], key=f"u2_{r['ref_no']}")
                         t_data["SG"] = st.selectbox("SG", UFR_DROPDOWNS["SG"], key=f"u3_{r['ref_no']}")
@@ -169,27 +169,67 @@ else:
                         res_map["CREATININE"] = t_data
 
                     if st.button(f"Authorize {t}", key=f"a_{t}_{r['ref_no']}"):
-                        cur = c.execute("SELECT data, comment FROM results WHERE bill_ref=?", (r['ref_no'],)).fetchone()
-                        ex_d = json.loads(cur[0]) if cur else {}; ex_c = json.loads(cur[1]) if cur else {}
-                        ex_d.update({t.upper(): res_map.get(t.upper(), t_data)}); ex_c.update({t.upper(): cmt_map.get(t.upper(), "")})
-                        c.execute("INSERT OR REPLACE INTO results (bill_ref, data, authorized_by, comment) VALUES (?,?,?,?)", (r['ref_no'], json.dumps(ex_d), st.session_state.username, json.dumps(ex_c)))
+                        cur = c.execute("SELECT data, comment, format_used FROM results WHERE bill_ref=?", (r['ref_no'],)).fetchone()
+                        ex_d = json.loads(cur[0]) if cur and cur[0] else {}
+                        ex_c = json.loads(cur[1]) if cur and cur[1] else {}
+                        ex_f = json.loads(cur[2]) if cur and cur[2] else []
+                        
+                        ex_d.update({t.upper(): res_map.get(t.upper(), t_data)})
+                        ex_c.update({t.upper(): cmt_map.get(t.upper(), "")})
+                        if t.upper() not in ex_f: ex_f.append(t.upper())
+                        
+                        c.execute("INSERT OR REPLACE INTO results (bill_ref, data, authorized_by, auth_date, comment, format_used) VALUES (?,?,?,?,?,?)", 
+                                  (r['ref_no'], json.dumps(ex_d), st.session_state.username, str(date.today()), json.dumps(ex_c), json.dumps(ex_f)))
                         conn.commit(); st.success(f"{t} Saved")
                 if st.button("Finalize", key=f"f_{r['ref_no']}"):
                     c.execute("UPDATE billing SET status='Completed' WHERE ref_no=?", (r['ref_no'],)); conn.commit(); st.rerun()
         
-        st.divider(); done = pd.read_sql_query("SELECT b.*, r.data, r.comment FROM billing b JOIN results r ON b.ref_no=r.bill_ref WHERE b.status='Completed'", conn)
-        for _, dr in done.iterrows():
+        st.divider(); 
+        res_done = c.execute("SELECT b.*, r.data, r.comment, r.format_used FROM billing b JOIN results r ON b.ref_no=r.bill_ref WHERE b.status='Completed'").fetchall()
+        for dr in res_done:
+            dr_dict = dict(zip([col[0] for col in c.description], dr))
             with st.container(border=True):
-                c1, c2, c3 = st.columns([3, 1, 1]); rd, cd = json.loads(dr['data']), json.loads(dr['comment'])
-                c1.write(f"**{dr['name']}** ({dr['doctor']})")
-                for tn in rd.keys(): c2.download_button(f"Print {tn}", create_pdf(dr, rd, st.session_state.username, [tn], cd), f"{tn}_{dr['ref_no']}.pdf")
-                c3.download_button("BULK PRINT", create_pdf(dr, rd, st.session_state.username, list(rd.keys()), cd), f"Full_{dr['ref_no']}.pdf", type="primary")
+                c1, c2, c3 = st.columns([3, 1, 1])
+                rd = json.loads(dr_dict['data']) if dr_dict['data'] else {}
+                cd = json.loads(dr_dict['comment']) if dr_dict['comment'] else {}
+                fu = json.loads(dr_dict['format_used']) if dr_dict['format_used'] else list(rd.keys())
+                
+                c1.write(f"**{dr_dict['name']}** ({dr_dict['doctor']})")
+                for tn in fu: 
+                    c2.download_button(f"Print {tn}", create_pdf(dr_dict, rd, st.session_state.username, [tn], cd), f"{tn}_{dr_dict['ref_no']}.pdf")
+                c3.download_button("BULK PRINT", create_pdf(dr_dict, rd, st.session_state.username, fu, cd), f"Full_{dr_dict['ref_no']}.pdf", type="primary")
 
     elif st.session_state.user_role == "Admin":
-        # Admin tabs logic (Users, Doctors, Tests) remains same
-        st.write("Admin Dashboard Active")
+        st.write("### Admin Dashboard")
+        t1, t2, t3 = st.tabs(["Users", "Doctors", "Tests"])
+        with t1:
+            nu, np, nr = st.text_input("Username"), st.text_input("Password"), st.selectbox("Role", ["Admin", "Billing", "Technician"])
+            if st.button("Save User"):
+                c.execute("INSERT OR REPLACE INTO users VALUES (?,?,?)", (nu, np, nr)); conn.commit(); st.success("User Saved")
+        with t2:
+            nd = st.text_input("Doc Name")
+            if st.button("Add Doctor"):
+                c.execute("INSERT INTO doctors (doc_name) VALUES (?)", (nd,)); conn.commit(); st.rerun()
+        with t3:
+            tn, tp = st.text_input("Test Name"), st.number_input("Price")
+            if st.button("Save Test"):
+                c.execute("INSERT OR REPLACE INTO tests VALUES (?,?)", (tn, tp)); conn.commit(); st.rerun()
+
     elif st.session_state.user_role == "Billing":
-        # Billing form logic remains same
-        st.write("Billing Dashboard Active")
+        st.write("### New Bill")
+        with st.form("bill"):
+            c1, c2 = st.columns(2)
+            sal, pname = c1.selectbox("Salute", ["Mr", "Mrs", "Miss", "Baby", "Rev"]), c2.text_input("Name")
+            age, gen = c1.number_input("Age", 0), c2.selectbox("Gender", ["Male", "Female"])
+            docs = [d[0] for d in c.execute("SELECT doc_name FROM doctors").fetchall()]
+            d_sel = st.selectbox("Doctor", ["Self"]+docs)
+            tests_db = pd.read_sql_query("SELECT * FROM tests", conn)
+            sel_t = st.multiselect("Tests", tests_db['test_name'].tolist())
+            total = sum(tests_db[tests_db['test_name'].isin(sel_t)]['price'])
+            disc = st.number_input("Discount")
+            if st.form_submit_button("Save Bill"):
+                ref = f"LC{datetime.now().strftime('%y%m%d%H%M%S')}"
+                c.execute("INSERT INTO billing (ref_no, salute, name, age_y, gender, doctor, tests, total, discount, final_amount, date, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (ref, sal, pname, age, gen, d_sel, ",".join(sel_t), total, disc, total-disc, str(date.today()), "Active"))
+                conn.commit(); st.success(f"Bill: {ref}")
 
 conn.close()
