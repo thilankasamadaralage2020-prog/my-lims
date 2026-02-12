@@ -112,11 +112,9 @@ def create_pdf(bill_row, results_dict=None, auth_user=None, is_report=False, com
             pdf.set_font("Arial", 'B', 14); pdf.cell(0, 10, "BIOCHEMISTRY REPORT", ln=True, align='C'); pdf.ln(5)
             pdf.set_font("Arial", 'B', 10); pdf.cell(80, 9, "  Test Description", 0, 0, 'L'); pdf.cell(40, 9, "Result", 0, 0, 'C'); pdf.cell(30, 9, "Unit", 0, 0, 'C'); pdf.cell(40, 9, "Ref. Range", 0, 1, 'C')
             pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(2)
-            
             cre_ref = "0.90 - 1.30" if bill_row['gender'] == "Male" else "0.65 - 1.10"
             pdf.set_font("Arial", '', 10)
             pdf.cell(80, 7, "  Serum Creatinine", 0); pdf.cell(40, 7, str(results_dict.get("Serum Creatinine", "")), 0, 0, 'C'); pdf.cell(30, 7, "mg/dL", 0, 0, 'C'); pdf.cell(40, 7, cre_ref, 0, 1, 'C')
-            
             if "eGFR" in results_dict and results_dict["eGFR"]:
                 pdf.cell(80, 7, "  eGFR (MDRD)", 0); pdf.cell(40, 7, str(results_dict.get("eGFR", "")), 0, 0, 'C'); pdf.cell(30, 7, "mL/min/1.73m2", 0, 0, 'C'); pdf.cell(40, 7, "> 60", 0, 1, 'C')
 
@@ -148,7 +146,6 @@ if not st.session_state.logged_in:
                 if c.fetchone(): st.session_state.update({'logged_in': True, 'user_role': r, 'username': u}); st.rerun()
                 else: st.error("Access Denied")
 else:
-    # Admin & Billing sections (Skipping for brevity as per instructions not to change anything else)
     if st.session_state.user_role == "Admin":
         st.sidebar.subheader("Admin Menu")
         choice = st.sidebar.radio("Navigate", ["Users", "Doctors", "Tests"])
@@ -215,13 +212,10 @@ else:
                     for c_name in ["Colour", "Appearance", "Specific Gravity", "PH", "Urine sugar", "Ketone bodies", "Bilirubin", "Urobilinogen", "Pus cells", "Red cells", "Epithelial cells"]:
                         results[c_name] = st.selectbox(c_name, UFR_DROPDOWNS[c_name])
                     results["Casts"] = st.text_input("Casts"); results["Crystals"] = st.text_input("Crystals"); f_type = "UFR"
-                
-                elif "CREATININE" in billed_tests or "SERUM CREATININE" in billed_tests:
+                elif "CREATININE" in billed_tests:
                     st.info(f"Format: Serum Creatinine ({row['gender']})")
-                    ref_range = "0.90 - 1.30" if row['gender'] == "Male" else "0.65 - 1.10"
                     cre_val = st.text_input("Serum Creatinine (mg/dL)")
                     results["Serum Creatinine"] = cre_val
-                    
                     if row['age_y'] >= 18:
                         if st.checkbox("Calculate eGFR automatically?"):
                             try:
@@ -229,18 +223,18 @@ else:
                                 age = row['age_y']
                                 egfr = 175 * (scr**-1.154) * (age**-0.203)
                                 if row['gender'] == "Female": egfr *= 0.742
-                                st.success(f"Calculated eGFR: {egfr:.2f}")
                                 results["eGFR"] = round(egfr, 2)
-                            except: st.error("Enter valid Creatinine value for eGFR")
+                                st.success(f"Calculated eGFR: {results['eGFR']}")
+                            except: st.warning("Enter valid Creatinine for eGFR")
                         else:
                             results["eGFR"] = st.text_input("eGFR Result (Optional)")
                     f_type = "Serum Creatinine"
+                else: f_type = "General"
                 
                 user_comment = st.text_area("Report Comments")
                 if st.form_submit_button("AUTHORIZE"):
                     c.execute("INSERT OR REPLACE INTO results VALUES (?,?,?,?,?,?)", (row['ref_no'], json.dumps(results), st.session_state.username, str(date.today()), f_type, user_comment))
                     c.execute("UPDATE billing SET status='Completed' WHERE ref_no=?", (row['ref_no'],)); conn.commit(); st.rerun()
-
         elif st.session_state.viewing_report_ref:
             res_row = pd.read_sql_query(f"SELECT b.*, r.data, r.authorized_by, r.comment, r.format_used FROM billing b JOIN results r ON b.ref_no = r.bill_ref WHERE b.ref_no='{st.session_state.viewing_report_ref}'", conn).iloc[0]
             st.download_button("📥 DOWNLOAD REPORT", create_pdf(res_row, json.loads(res_row['data']), res_row['authorized_by'], True, res_row['comment'], res_row['format_used']), f"Rep_{res_row['ref_no']}.pdf", use_container_width=True)
